@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Онлайн-доска для совместного рисования: открой ссылку и рисуй вместе.">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f6f5e'/%3E%3Cpath d='M8 22c3-8 6-11 8-6s5 2 8-6' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <title>Общая доска</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Figtree:wght@400;500;600&display=swap">
@@ -431,8 +431,8 @@ function restyleSelected() {
 /* ---------- data writes (sent to the server) ---------- */
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const strip = it => { const { _id, ...rest } = it; return rest; };
-function rawSet(id, data) { shared.set(id, data); send({ type: "set", id, data }); }
-function rawDelete(id) { shared.delete(id); send({ type: "del", id }); }
+function rawSet(id, data) { shared.set(id, data); send({ type: "set", id, data }); cacheSave(); }
+function rawDelete(id) { shared.delete(id); send({ type: "del", id }); cacheSave(); }
 function record(op) { undoStack.push(op); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; syncUndo(); }
 function create(data) {
   const id = newId();
@@ -486,13 +486,13 @@ stage.addEventListener("pointerdown", e => {
   if (tool === "note") {
     const id = create({ kind: "note", x: Math.round(w.x - 95), y: Math.round(w.y - 65), c: noteColor, text: "" });
     ptrs.delete(e.pointerId); setTool("select"); select(id);
-    requestAnimationFrame(() => { const el = domEl.querySelector(`[data-id="${id}"]`); if (el) editDom(el); });
+    e.preventDefault(); const el = domEl.querySelector(`[data-id="${id}"]`); if (el) editDom(el);
     return;
   }
   if (tool === "text") {
     const id = create({ kind: "text", x: Math.round(w.x - 4), y: Math.round(w.y - 22), c: ink, s: size, text: "" });
     ptrs.delete(e.pointerId);
-    requestAnimationFrame(() => { const el = domEl.querySelector(`[data-id="${id}"]`); if (el) editDom(el); });
+    e.preventDefault(); const el = domEl.querySelector(`[data-id="${id}"]`); if (el) editDom(el);
     return;
   }
   const x = r1(w.x), y = r1(w.y);
@@ -647,7 +647,7 @@ function renderClear(confirming) {
     $("cYes").onclick = async () => {
       renderClear(false);
       undoStack.length = redoStack.length = 0; syncUndo(); selected = null;
-      shared.clear(); renderDom(); draw(); send({ type: "clear" });
+      const ids = [...shared.keys()]; shared.clear(); renderDom(); draw(); send({ type: "clear", ids });
     };
   } else $("clearBtn").onclick = () => renderClear(true);
 }
@@ -742,39 +742,148 @@ $("nameBtn").onclick = () => {
 
 /* share */
 $("shareBtn").onclick = async () => {
-  const link = location.href.split("#")[0];
+  const link = location.origin + location.pathname + (STATIC_HOST ? "#" + boardId : "");
   try { await navigator.clipboard.writeText(link); toast("Ссылка скопирована. Отправьте её тем, с кем хотите рисовать."); }
   catch { prompt("Скопируйте ссылку на доску:", link); }
 };
 
-/* connection */
-const boardId = (location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1] || "demo";
-let ws = null, retry = 0;
-function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
-function connect() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/ws?board=${encodeURIComponent(boardId)}&name=${encodeURIComponent(myName)}`);
-  ws.onopen = () => { retry = 0; };
-  ws.onmessage = ev => {
-    let m; try { m = JSON.parse(ev.data); } catch { return; }
-    if (m.type === "init") {
-      const first = mode === "connecting";
-      myPeer = m.you; shared.clear();
-      for (const [k, v] of Object.entries(m.items || {})) shared.set(k, v);
-      peers = m.peers || []; mode = "shared"; renderClear(false);
-      renderDom(); draw(); renderPeers();
-      if (first) fit();
-    } else if (m.type === "set") { if (!(drag && drag.id === m.id)) { shared.set(m.id, m.data); renderDom(); draw(); } }
-    else if (m.type === "del") { shared.delete(m.id); if (selected === m.id) selected = null; renderDom(); draw(); }
-    else if (m.type === "clear") { shared.clear(); selected = null; renderDom(); draw(); }
-    else if (m.type === "peers") { peers = m.peers || []; renderPeers(); }
-    else if (m.type === "cursor") { if (m.cur) cursors.set(m.peer, m.cur); else cursors.delete(m.peer); renderCursors(); }
-    else if (m.type === "error") toast(m.message || "Ошибка сервера");
+/* connection: own WebSocket server (Node / Cloudflare) or a public MQTT broker (static hosting) */
+const STATIC_HOST = location.hostname.endsWith("github.io") || new URLSearchParams(location.search).has("mqtt");
+const MQTT_URL = (q => /^wss?:\/\//.test(q) ? q : "wss://broker.emqx.io:8084/mqtt")(new URLSearchParams(location.search).get("mqtt") || "");
+const KINDS = new Set(["stroke", "line", "arrow", "rect", "ellipse", "text", "note"]);
+const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+let boardId = (location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1];
+if (!boardId) {
+  const h = location.hash.slice(1);
+  if (ID_RE.test(h)) boardId = h;
+  else {
+    const a = crypto.getRandomValues(new Uint8Array(6));
+    boardId = btoa(String.fromCharCode(...a)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    history.replaceState(null, "", location.pathname + location.search + "#" + boardId);
+  }
+}
+addEventListener("hashchange", () => { const h = location.hash.slice(1); if (STATIC_HOST && ID_RE.test(h) && h !== boardId) location.reload(); });
+
+function handle(m) {
+  if (m.type === "init") {
+    const first = !fittedOnce;
+    myPeer = m.you; shared.clear();
+    for (const [k, v] of Object.entries(m.items || {})) shared.set(k, v);
+    peers = m.peers || []; mode = "shared"; renderClear(false);
+    renderDom(); draw(); renderPeers(); cacheSave();
+    if (first) { fittedOnce = true; fit(); }
+  } else if (m.type === "set") { if (!(drag && drag.id === m.id)) { shared.set(m.id, m.data); renderDom(); draw(); cacheSave(); } }
+  else if (m.type === "del") { shared.delete(m.id); if (selected === m.id) selected = null; renderDom(); draw(); cacheSave(); }
+  else if (m.type === "clear") { shared.clear(); selected = null; renderDom(); draw(); cacheSave(); }
+  else if (m.type === "peers") { peers = m.peers || []; renderPeers(); }
+  else if (m.type === "cursor") { if (m.cur) cursors.set(m.peer, m.cur); else cursors.delete(m.peer); renderCursors(); }
+  else if (m.type === "error") toast(m.message || "Ошибка сервера");
+}
+let fittedOnce = false;
+
+/* local cache: instant first paint and recovery if the relay forgot the board */
+const CACHE_KEY = "board.cache." + boardId;
+let cacheT = 0;
+function cacheSave() { clearTimeout(cacheT); cacheT = setTimeout(() => { try { localStorage.setItem(CACHE_KEY, JSON.stringify([...shared])); } catch {} }, 500); }
+function cacheLoad() { try { return new Map(JSON.parse(localStorage.getItem(CACHE_KEY) || "[]")); } catch { return new Map(); } }
+
+const num = v => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1e7;
+function cleanItem(d) {
+  if (!d || typeof d !== "object" || !KINDS.has(d.kind)) return null;
+  const out = { kind: d.kind, c: String(d.c || "ink").slice(0, 20), t: num(d.t) ? d.t : 0 };
+  if (d.kind === "stroke") {
+    if (!Array.isArray(d.p) || d.p.length < 2 || d.p.length > 8000 || !d.p.every(num)) return null;
+    out.p = d.p; out.w = num(d.w) ? Math.min(Math.max(d.w, .5), 80) : 4; if (d.hl) out.hl = true;
+  } else if (d.kind === "text" || d.kind === "note") {
+    if (!num(d.x) || !num(d.y)) return null;
+    out.x = d.x; out.y = d.y; out.text = String(d.text || "").slice(0, 1000);
+    if (d.kind === "text") out.s = ["S", "M", "L"].includes(d.s) ? d.s : "M";
+  } else {
+    if (![d.x1, d.y1, d.x2, d.y2].every(num)) return null;
+    Object.assign(out, { x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, w: num(d.w) ? Math.min(Math.max(d.w, .5), 80) : 4 });
+  }
+  return out;
+}
+
+let send = () => {}, connect;
+if (!STATIC_HOST) {
+  let ws = null, retry = 0;
+  send = m => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+  connect = () => {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws?board=${encodeURIComponent(boardId)}&name=${encodeURIComponent(myName)}`);
+    ws.onopen = () => { retry = 0; };
+    ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch { return; } handle(m); };
+    ws.onclose = () => { if (mode !== "connecting") mode = "offline"; setStatus(); setTimeout(connect, Math.min(10000, 500 * 2 ** retry++)); };
   };
-  ws.onclose = () => {
-    if (mode !== "connecting") mode = "offline";
-    setStatus();
-    setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
+} else {
+  const T = "ob1/" + boardId;
+  const me = (() => { const a = crypto.getRandomValues(new Uint8Array(6)); return [...a].map(b => b.toString(16).padStart(2, "0")).join(""); })();
+  const myColor = PEER_COLORS[parseInt(me.slice(0, 4), 16) % PEER_COLORS.length];
+  const seen = new Map(); // peer -> { name, color, last }
+  let mq = null, loading = null, hbTimer = 0;
+  const peerArr = () => [{ peer: me, name: myName, color: myColor }, ...[...seen].map(([peer, v]) => ({ peer, name: v.name, color: v.color }))];
+  const pub = (topic, payload, opts) => { if (mq && mq.connected) mq.publish(topic, payload, opts); };
+  const announce = cur => pub(T + "/c/" + me, JSON.stringify(cur === undefined ? { name: myName, color: myColor } : { name: myName, color: myColor, cur }), { qos: 0 });
+  send = m => {
+    if (m.type === "set") pub(T + "/i/" + m.id, JSON.stringify(m.data), { qos: 1, retain: true });
+    else if (m.type === "del") pub(T + "/i/" + m.id, "", { qos: 1, retain: true });
+    else if (m.type === "clear") for (const id of m.ids || []) pub(T + "/i/" + id, "", { qos: 1, retain: true });
+    else if (m.type === "cursor") announce(m.cur);
+    else if (m.type === "name") announce();
+  };
+  setInterval(() => {
+    const now = Date.now(); let changed = false;
+    for (const [p, v] of seen) if (now - v.last > 14000) { seen.delete(p); cursors.delete(p); changed = true; }
+    if (changed) handle({ type: "peers", peers: peerArr() });
+  }, 3000);
+  function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); }); }
+  connect = async () => {
+    // show the cached copy right away, read-only until the relay answers
+    for (const [k, v] of cacheLoad()) shared.set(k, v);
+    renderDom(); draw();
+    if (shared.size && !fittedOnce) { fittedOnce = true; fit(); }
+    try { await loadScript("mqtt.min.js"); } catch { mode = "offline"; setStatus(); return; }
+    mq = mqtt.connect(MQTT_URL, {
+      protocolVersion: 5, clean: true, reconnectPeriod: 2000, connectTimeout: 12000, keepalive: 30,
+      clientId: "ob_" + me,
+      will: { topic: T + "/c/" + me, payload: JSON.stringify({ gone: true }), qos: 0, retain: false },
+    });
+    mq.on("connect", () => {
+      loading = new Map();
+      mq.subscribe({ [T + "/i/+"]: { qos: 1, nl: true }, [T + "/c/+"]: { qos: 0, nl: true } }, () => {
+        setTimeout(() => {
+          const cached = cacheLoad(), items = loading; loading = null;
+          // the relay lost this board but this browser still has it: put it back
+          if (!items.size && cached.size) for (const [id, v] of cached) { items.set(id, v); pub(T + "/i/" + id, JSON.stringify(v), { qos: 1, retain: true }); }
+          handle({ type: "init", items: Object.fromEntries(items), you: me, peers: peerArr() });
+          announce();
+        }, 900);
+      });
+      clearInterval(hbTimer); hbTimer = setInterval(() => announce(), 5000);
+    });
+    mq.on("message", (topic, payload) => {
+      const parts = topic.split("/"), kind = parts[2], id = parts[3];
+      if (!ID_RE.test(id || "")) return;
+      if (kind === "i") {
+        if (!payload.length) { if (loading) loading.delete(id); else handle({ type: "del", id }); return; }
+        let d; try { d = cleanItem(JSON.parse(new TextDecoder().decode(payload))); } catch { return; }
+        if (!d) return;
+        if (loading) loading.set(id, d); else handle({ type: "set", id, data: d });
+      } else if (kind === "c" && id !== me) {
+        let d; try { d = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
+        if (!d || typeof d !== "object") return;
+        if (d.gone) { seen.delete(id); cursors.delete(id); handle({ type: "peers", peers: peerArr() }); return; }
+        const isNew = !seen.has(id);
+        const color = /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : PEER_COLORS[0];
+        seen.set(id, { name: String(d.name || "Гость").slice(0, 32), color, last: Date.now() });
+        if (isNew) { handle({ type: "peers", peers: peerArr() }); announce(); }
+        if ("cur" in d) handle({ type: "cursor", peer: id, cur: d.cur && num(d.cur.x) && num(d.cur.y) ? { x: d.cur.x, y: d.cur.y } : null });
+      }
+    });
+    const down = () => { if (mode === "shared") { mode = "offline"; setStatus(); } };
+    mq.on("offline", down); mq.on("close", down);
+    mq.on("reconnect", () => { if (mode !== "shared") setStatus(); });
   };
 }
 
