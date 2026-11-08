@@ -54,6 +54,7 @@ function cleanItem(d, board) {
     if (!num(d.x) || !num(d.y)) return null;
     out.x = d.x; out.y = d.y; out.text = String(d.text || "").slice(0, 1000);
     if (d.kind === "text") out.s = ["S", "M", "L"].includes(d.s) ? d.s : "M";
+    if (d.kind === "text" && num(d.fs)) out.fs = Math.min(Math.max(Math.round(d.fs), 8), 200);
   } else if (d.kind === "image") {
     if (![d.x, d.y, d.w, d.h].every(num) || d.w <= 0 || d.h <= 0) return null;
     const m = /^\/img\/([A-Za-z0-9_-]{1,40})\/([A-Za-z0-9_-]{1,40})$/.exec(String(d.src || ""));
