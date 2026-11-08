@@ -749,7 +749,7 @@ $("shareBtn").onclick = async () => {
 
 /* connection: own WebSocket server (Node / Cloudflare) or a public MQTT broker (static hosting) */
 const STATIC_HOST = location.hostname.endsWith("github.io") || new URLSearchParams(location.search).has("mqtt");
-const MQTT_URL = (q => /^wss?:\/\//.test(q) ? q : "wss://broker.emqx.io:8084/mqtt")(new URLSearchParams(location.search).get("mqtt") || "");
+const MQTT_URLS = (q => { const l = q.split(",").filter(u => /^wss?:\/\//.test(u)); return l.length ? l : ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt"]; })(new URLSearchParams(location.search).get("mqtt") || "");
 const KINDS = new Set(["stroke", "line", "arrow", "rect", "ellipse", "text", "note"]);
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 let boardId = (location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1];
@@ -823,7 +823,7 @@ if (!STATIC_HOST) {
   const seen = new Map(); // peer -> { name, color, last }
   let mq = null, loading = null, hbTimer = 0;
   const peerArr = () => [{ peer: me, name: myName, color: myColor }, ...[...seen].map(([peer, v]) => ({ peer, name: v.name, color: v.color }))];
-  const pub = (topic, payload, opts) => { if (mq && mq.connected) mq.publish(topic, payload, opts); };
+  const pub = (topic, payload, opts) => { if (mq && (mq.connected || opts.qos)) mq.publish(topic, payload, opts); };
   const announce = cur => pub(T + "/c/" + me, JSON.stringify(cur === undefined ? { name: myName, color: myColor } : { name: myName, color: myColor, cur }), { qos: 0 });
   send = m => {
     if (m.type === "set") pub(T + "/i/" + m.id, JSON.stringify(m.data), { qos: 1, retain: true });
@@ -844,12 +844,30 @@ if (!STATIC_HOST) {
     renderDom(); draw();
     if (shared.size && !fittedOnce) { fittedOnce = true; fit(); }
     try { await loadScript("mqtt.min.js"); } catch { mode = "offline"; setStatus(); return; }
-    mq = mqtt.connect(MQTT_URL, {
-      protocolVersion: 5, clean: true, reconnectPeriod: 2000, connectTimeout: 12000, keepalive: 30,
-      clientId: "ob_" + me,
-      will: { topic: T + "/c/" + me, payload: JSON.stringify({ gone: true }), qos: 0, retain: false },
-    });
+    let urlIdx = 0, fails = 0, everConnected = false;
+    try { const saved = Number(sessionStorage.getItem("board.relay")); if (saved > 0 && saved < MQTT_URLS.length) urlIdx = saved; } catch {}
+    setTimeout(() => { if (mode === "connecting") { mode = "offline"; setStatus(); } }, 15000);
+    const open = () => {
+      mq = mqtt.connect(MQTT_URLS[urlIdx], {
+        protocolVersion: 5, clean: true, reconnectPeriod: 2000, connectTimeout: 10000, keepalive: 30,
+        clientId: "ob_" + me,
+        will: { topic: T + "/c/" + me, payload: JSON.stringify({ gone: true }), qos: 0, retain: false },
+      });
+      wire();
+    };
+    // if the first relay cannot be reached at all, move to the next one
+    const failover = () => {
+      if (everConnected || ++fails < 3 || MQTT_URLS.length < 2) return;
+      fails = 0; const old = mq; old.removeAllListeners(); old.end(true);
+      urlIdx = (urlIdx + 1) % MQTT_URLS.length;
+      try { sessionStorage.setItem("board.relay", String(urlIdx)); } catch {}
+      open();
+    };
+    const wire = () => {
+    mq.on("error", failover);
+    mq.on("close", failover);
     mq.on("connect", () => {
+      everConnected = true;
       loading = new Map();
       mq.subscribe({ [T + "/i/+"]: { qos: 1, nl: true }, [T + "/c/+"]: { qos: 0, nl: true } }, () => {
         setTimeout(() => {
@@ -884,6 +902,8 @@ if (!STATIC_HOST) {
     const down = () => { if (mode === "shared") { mode = "offline"; setStatus(); } };
     mq.on("offline", down); mq.on("close", down);
     mq.on("reconnect", () => { if (mode !== "shared") setStatus(); });
+    };
+    open();
   };
 }
 
