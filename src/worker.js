@@ -1,18 +1,52 @@
-// Cloudflare Worker + Durable Object: one Durable Object per board keeps its items and pictures
-// in SQLite and relays live changes over WebSockets.
+// Cloudflare Worker for the whiteboard.
+// - Board: one Durable Object per board. Keeps items, pictures, roles and bans in SQLite and relays
+//   live changes over WebSockets. Every write is checked against the sender's role here.
+// - Registry: a single Durable Object with the owner's password, login sessions, the list of boards
+//   and site settings.
 import { DurableObject } from "cloudflare:workers";
 import INDEX_HTML from "../public/index.html";
+import ADMIN_HTML from "../public/admin.html";
+import HOME_HTML from "../public/home.html";
+import THEME_JS from "../public/theme.js";
 import FAVICON_SVG from "../public/favicon.svg";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const CLIENT_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const KINDS = new Set(["stroke", "line", "arrow", "rect", "ellipse", "text", "note", "image"]);
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const MAX_ITEMS = 20000;
 const MAX_IMAGE_BYTES = 1_900_000;        // one SQLite row holds up to 2 MB
 const MAX_BOARD_IMAGE_BYTES = 200_000_000;
+const SESSION_DAYS = 30;
 const COLORS = ["#d2462f", "#2c63c9", "#2f8a4a", "#b0569e", "#e08a1e", "#1c8a8a", "#7a4cc2", "#c2410c"];
+const ROLES = new Set(["editor", "viewer"]);
 
+/* ---------- helpers ---------- */
+const enc = new TextEncoder();
 const num = v => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1e7;
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const randomId = bytes => b64url(crypto.getRandomValues(new Uint8Array(bytes)));
+const sha256 = async s => b64url(await crypto.subtle.digest("SHA-256", enc.encode(s)));
+async function pbkdf2(password, salt) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  return b64url(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: enc.encode(salt), iterations: 100000 }, key, 256));
+}
+function safeEqual(a, b) {
+  a = String(a); b = String(b);
+  let r = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) r |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return r === 0;
+}
+const cleanName = (v, fallback) => (String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60)) || fallback;
+const SEC_HEADERS = { "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "x-frame-options": "DENY" };
+const html = body => new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", ...SEC_HEADERS } });
+const json = (obj, status = 200, headers = {}) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers } });
+function getCookie(req, name) {
+  const m = (req.headers.get("cookie") || "").match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
+  return m ? m[1] : null;
+}
+const sessionCookie = (sid, maxAge) => `sid=${sid}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+
 function cleanItem(d, board) {
   if (!d || typeof d !== "object" || !KINDS.has(d.kind)) return null;
   const out = { kind: d.kind, c: String(d.c || "ink").slice(0, 20), t: num(d.t) ? d.t : Date.now() };
@@ -36,82 +70,341 @@ function cleanItem(d, board) {
   }
   return out;
 }
-function randomId(bytes) {
-  const a = crypto.getRandomValues(new Uint8Array(bytes));
-  return btoa(String.fromCharCode(...a)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/* ---------- worker: routing and owner API ---------- */
+const registry = env => env.REGISTRY.get(env.REGISTRY.idFromName("registry"));
+const boardStub = (env, id) => env.BOARD.get(env.BOARD.idFromName(id));
+async function call(stub, path, body) {
+  const r = await stub.fetch("https://internal" + path, body === undefined ? {} : { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  return r.json();
 }
-const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json; charset=utf-8" } });
+async function isAdmin(env, req) {
+  const sid = getCookie(req, "sid");
+  if (!sid || !/^[A-Za-z0-9_-]{20,64}$/.test(sid)) return false;
+  return !!(await call(registry(env), "/session", { sid })).admin;
+}
+const ipHash = (env, req) => sha256((req.headers.get("cf-connecting-ip") || "") + "|" + (env.SETUP_TOKEN || "board"));
+// Forward a browser request to a board with trusted headers that the browser cannot set itself.
+async function toBoard(env, req, board, admin) {
+  const h = new Headers(req.headers);
+  for (const k of ["x-admin", "x-ip"]) h.delete(k);
+  h.set("x-admin", admin ? "1" : "0");
+  h.set("x-ip", await ipHash(env, req));
+  return boardStub(env, board).fetch(new Request(req, { headers: h }));
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
+    const method = request.method;
+    const sameOrigin = (request.headers.get("origin") || url.origin) === url.origin;
+
     if (p === "/healthz") return new Response("ok");
-    if (p === "/") return Response.redirect(url.origin + "/b/" + randomId(6), 302);
+    if (p === "/favicon.svg") return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
+    if (p === "/theme.js") return new Response(THEME_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
+    if (p === "/admin" || p === "/admin/") return html(ADMIN_HTML);
+    if (/^\/b\/[A-Za-z0-9_-]{1,40}\/?$/.test(p)) return html(INDEX_HTML);
+
+    if (p === "/") {
+      if (await isAdmin(env, request)) return Response.redirect(url.origin + "/admin", 302);
+      const st = await call(registry(env), "/state");
+      if (st.createPolicy === "all") return Response.redirect(url.origin + "/b/" + randomId(6), 302);
+      return html(HOME_HTML);
+    }
+
     if (p === "/ws") {
       const board = url.searchParams.get("board");
       if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
       if (!board || !ID_RE.test(board)) return new Response("Bad board id", { status: 400 });
-      return env.BOARD.get(env.BOARD.idFromName(board)).fetch(request);
+      // the owner's cookie only counts when the page itself is on this site
+      const admin = sameOrigin && request.headers.get("origin") ? await isAdmin(env, request) : false;
+      return toBoard(env, request, board, admin);
     }
+
     const img = /^\/img\/([A-Za-z0-9_-]{1,40})(?:\/([A-Za-z0-9_-]{1,40}))?$/.exec(p);
     if (img) {
-      const board = img[1];
-      if (request.method === "POST" && !img[2]) {
-        const len = Number(request.headers.get("content-length") || 0);
-        if (len > MAX_IMAGE_BYTES) return json({ error: "too_large" }, 413);
-      } else if (!(request.method === "GET" && img[2])) return new Response("Not allowed", { status: 405 });
-      return env.BOARD.get(env.BOARD.idFromName(board)).fetch(request);
+      if (method === "GET" && img[2]) return boardStub(env, img[1]).fetch(request);
+      if (method === "POST" && !img[2]) {
+        if (!sameOrigin) return json({ error: "forbidden" }, 403);
+        if (Number(request.headers.get("content-length") || 0) > MAX_IMAGE_BYTES) return json({ error: "too_large" }, 413);
+        return toBoard(env, request, img[1], await isAdmin(env, request));
+      }
+      return new Response("Not allowed", { status: 405 });
     }
-    if (/^\/b\/[A-Za-z0-9_-]{1,40}\/?$/.test(p)) {
-      return new Response(INDEX_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
+
+    if (p.startsWith("/api/")) {
+      if (method !== "GET" && !sameOrigin) return json({ error: "forbidden" }, 403);
+      let body = {};
+      if (method !== "GET" && method !== "DELETE") { try { body = await request.json(); } catch { return json({ error: "bad_json" }, 400); } }
+      const R = registry(env);
+
+      if (p === "/api/state" && method === "GET") {
+        const st = await call(R, "/state");
+        return json({ adminSet: st.adminSet, createPolicy: st.createPolicy, isAdmin: await isAdmin(env, request) });
+      }
+      if (p === "/api/setup" && method === "POST") {
+        const r = await call(R, "/setup", { token: String(body.token || ""), password: String(body.password || "") });
+        if (!r.sid) return json(r, 400);
+        return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.sid, SESSION_DAYS * 86400) });
+      }
+      if (p === "/api/login" && method === "POST") {
+        const r = await call(R, "/login", { password: String(body.password || ""), ip: await ipHash(env, request) });
+        if (!r.sid) return json(r, r.error === "locked" ? 429 : 401);
+        return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.sid, SESSION_DAYS * 86400) });
+      }
+      if (p === "/api/logout" && method === "POST") {
+        const sid = getCookie(request, "sid");
+        if (sid) await call(R, "/logout", { sid });
+        return json({ ok: true }, 200, { "set-cookie": sessionCookie("x", 0) });
+      }
+
+      // everything below is for the owner only
+      if (!(await isAdmin(env, request))) return json({ error: "unauthorized" }, 401);
+
+      if (p === "/api/password" && method === "POST") {
+        const r = await call(R, "/password", { old: String(body.old || ""), password: String(body.password || "") });
+        return json(r, r.ok ? 200 : 400);
+      }
+      if (p === "/api/settings" && method === "POST") {
+        return json(await call(R, "/settings", { createPolicy: body.createPolicy === "all" ? "all" : "admin" }));
+      }
+      if (p === "/api/boards" && method === "GET") {
+        const { boards } = await call(R, "/boards/list");
+        const withStats = await Promise.all(boards.slice(0, 300).map(async b => {
+          try { return { ...b, ...(await call(boardStub(env, b.id), "/internal/stats")) }; } catch { return b; }
+        }));
+        return json({ boards: withStats.filter(b => !b.deleted) });
+      }
+      if (p === "/api/boards" && method === "POST") {
+        const id = randomId(6), name = cleanName(body.name, "Новая доска");
+        await call(boardStub(env, id), "/internal/init", { id, name });
+        return json({ id, name });
+      }
+      const bm = /^\/api\/boards\/([A-Za-z0-9_-]{1,40})$/.exec(p);
+      if (bm && method === "PATCH") {
+        const patch = {};
+        if (body.name !== undefined) patch.name = cleanName(body.name, "Доска");
+        if (body.access !== undefined) patch.access = body.access === "view" ? "view" : "edit";
+        return json(await call(boardStub(env, bm[1]), "/internal/settings", patch));
+      }
+      if (bm && method === "DELETE") {
+        await call(boardStub(env, bm[1]), "/internal/wipe", {});
+        await call(R, "/boards/remove", { id: bm[1] });
+        return json({ ok: true });
+      }
+      return json({ error: "not_found" }, 404);
     }
-    if (p === "/favicon.svg") return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
+
     return new Response("Не найдено", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   },
 };
 
+/* ---------- Registry: owner, sessions, board list, settings ---------- */
+export class Registry extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS fails (ip TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL);`);
+  }
+  get(k) { const r = this.sql.exec("SELECT value FROM kv WHERE key = ?", k).toArray()[0]; return r ? JSON.parse(r.value) : null; }
+  put(k, v) { this.sql.exec("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", k, JSON.stringify(v)); }
+  async newSession() {
+    const sid = randomId(24);
+    this.sql.exec("DELETE FROM sessions WHERE expires < ?", Date.now());
+    this.sql.exec("INSERT INTO sessions (id, expires) VALUES (?, ?)", await sha256(sid), Date.now() + SESSION_DAYS * 86400e3);
+    return sid;
+  }
+  async fetch(request) {
+    const p = new URL(request.url).pathname;
+    const b = request.method === "POST" ? await request.json() : {};
+    switch (p) {
+      case "/state": return json({ adminSet: !!this.get("pwd"), createPolicy: this.get("createPolicy") || "admin" });
+      case "/setup": {
+        if (this.get("pwd")) return json({ error: "already_set" });
+        if (!this.env.SETUP_TOKEN || !safeEqual(b.token, this.env.SETUP_TOKEN)) return json({ error: "bad_token" });
+        if (String(b.password).length < 8) return json({ error: "short_password" });
+        const salt = randomId(16);
+        this.put("pwd", { salt, hash: await pbkdf2(b.password, salt) });
+        return json({ sid: await this.newSession() });
+      }
+      case "/login": {
+        const pwd = this.get("pwd");
+        if (!pwd) return json({ error: "not_set" });
+        const now = Date.now();
+        const f = this.sql.exec("SELECT n, until FROM fails WHERE ip = ?", b.ip).toArray()[0];
+        if (f && f.until > now) return json({ error: "locked", retryIn: Math.ceil((f.until - now) / 60000) });
+        if (!safeEqual(await pbkdf2(String(b.password), pwd.salt), pwd.hash)) {
+          const n = (f ? f.n : 0) + 1;
+          this.sql.exec("INSERT OR REPLACE INTO fails (ip, n, until) VALUES (?, ?, ?)", b.ip, n >= 5 ? 0 : n, n >= 5 ? now + 10 * 60e3 : 0);
+          return json({ error: "wrong_password" });
+        }
+        this.sql.exec("DELETE FROM fails WHERE ip = ?", b.ip);
+        return json({ sid: await this.newSession() });
+      }
+      case "/session": {
+        const r = this.sql.exec("SELECT expires FROM sessions WHERE id = ?", await sha256(String(b.sid))).toArray()[0];
+        return json({ admin: !!r && r.expires > Date.now() });
+      }
+      case "/logout": this.sql.exec("DELETE FROM sessions WHERE id = ?", await sha256(String(b.sid))); return json({ ok: true });
+      case "/password": {
+        const pwd = this.get("pwd");
+        if (!pwd || !safeEqual(await pbkdf2(String(b.old), pwd.salt), pwd.hash)) return json({ error: "wrong_password" });
+        if (String(b.password).length < 8) return json({ error: "short_password" });
+        const salt = randomId(16);
+        this.put("pwd", { salt, hash: await pbkdf2(b.password, salt) });
+        return json({ ok: true });
+      }
+      case "/settings": this.put("createPolicy", b.createPolicy === "all" ? "all" : "admin"); return json({ ok: true, createPolicy: this.get("createPolicy") });
+      case "/boards/list": return json({ boards: this.sql.exec("SELECT id, name, created FROM boards ORDER BY created DESC").toArray() });
+      case "/boards/add": this.sql.exec("INSERT OR IGNORE INTO boards (id, name, created) VALUES (?, ?, ?)", b.id, cleanName(b.name, "Доска"), Date.now()); return json({ ok: true });
+      case "/boards/rename": this.sql.exec("UPDATE boards SET name = ? WHERE id = ?", cleanName(b.name, "Доска"), b.id); return json({ ok: true });
+      case "/boards/remove": this.sql.exec("DELETE FROM boards WHERE id = ?", b.id); return json({ ok: true });
+    }
+    return json({ error: "not_found" }, 404);
+  }
+}
+
+/* ---------- Board ---------- */
+const isManager = role => role === "admin" || role === "owner";
 export class Board extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.sql.exec("CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
-    this.sql.exec("CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL)");
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL);
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS roles (client TEXT PRIMARY KEY, role TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, client TEXT NOT NULL, ip TEXT NOT NULL, name TEXT NOT NULL, at INTEGER NOT NULL);`);
+    this.meta = {};
+    for (const r of this.sql.exec("SELECT key, value FROM meta")) this.meta[r.key] = JSON.parse(r.value);
     this.budget = new Map();
+    this.warned = new Map();
   }
 
+  /* settings and roles */
+  setMeta(k, v) { this.meta[k] = v; this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", k, JSON.stringify(v)); }
+  hasContent() { return this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n > 0; }
+  info() { return { name: this.meta.name || "Общая доска", access: this.meta.access || "edit" }; }
+  async init(id, name, owner) {
+    this.setMeta("id", id); this.setMeta("name", cleanName(name, "Доска")); this.setMeta("access", "edit");
+    this.setMeta("owner", owner || null); this.setMeta("created", Date.now()); this.setMeta("deleted", false);
+    await call(registry(this.env), "/boards/add", { id, name: this.meta.name });
+  }
+  roleFor(a) {
+    if (a.admin) return "admin";
+    if (this.meta.owner && a.client === this.meta.owner) return "owner";
+    const r = this.sql.exec("SELECT role FROM roles WHERE client = ?", a.client).toArray()[0];
+    if (r) return r.role;
+    return (this.meta.access || "edit") === "edit" ? "editor" : "viewer";
+  }
+  // bans follow the person's browser, not the network: people on one Wi-Fi share an address
+  banned(client) { return this.sql.exec("SELECT 1 FROM bans WHERE client = ?", client).toArray().length > 0; }
+  banList() { return this.sql.exec("SELECT id, name, at FROM bans ORDER BY at DESC").toArray(); }
+  sockets() { return this.ctx.getWebSockets().map(ws => ({ ws, meta: ws.deserializeAttachment() })).filter(s => s.meta); }
   peers(except) {
-    return this.ctx.getWebSockets().filter(w => w !== except).map(w => w.deserializeAttachment()).filter(Boolean)
-      .map(({ peer, name, color }) => ({ peer, name, color }));
+    return this.sockets().filter(s => s.ws !== except).map(({ meta: m }) => ({ peer: m.peer, name: m.name, color: m.color, role: m.role }));
   }
   broadcast(msg, except) {
     const s = typeof msg === "string" ? msg : JSON.stringify(msg);
-    for (const w of this.ctx.getWebSockets()) {
-      if (w === except) continue;
-      try { w.send(s); } catch {}
+    for (const w of this.ctx.getWebSockets()) { if (w === except) continue; try { w.send(s); } catch {} }
+  }
+  toManagers(msg) {
+    const s = JSON.stringify(msg);
+    for (const { ws, meta } of this.sockets()) if (isManager(meta.role)) { try { ws.send(s); } catch {} }
+  }
+  // recompute everyone's role after a settings or role change and tell whoever changed
+  refreshRoles() {
+    for (const { ws, meta } of this.sockets()) {
+      const role = this.roleFor(meta);
+      if (role !== meta.role) {
+        meta.role = role; ws.serializeAttachment(meta);
+        try { ws.send(JSON.stringify({ type: "you", role, bans: isManager(role) ? this.banList() : undefined })); } catch {}
+      }
     }
+    this.broadcast({ type: "peers", peers: this.peers() });
+  }
+  applySettings(patch) {
+    if (patch.name !== undefined) {
+      this.setMeta("name", cleanName(patch.name, "Доска"));
+      this.ctx.waitUntil(call(registry(this.env), "/boards/rename", { id: this.meta.id, name: this.meta.name }).catch(() => {}));
+    }
+    if (patch.access === "edit" || patch.access === "view") this.setMeta("access", patch.access);
+    this.broadcast({ type: "board", board: this.info() });
+    this.refreshRoles();
+    return { ok: true, ...this.info() };
+  }
+  wipe() {
+    this.broadcast({ type: "kicked", reason: "deleted" });
+    for (const w of this.ctx.getWebSockets()) { try { w.close(4004, "deleted"); } catch {} }
+    for (const t of ["items", "images", "roles", "bans", "meta"]) this.sql.exec(`DELETE FROM ${t}`);
+    this.meta = {};
+    this.setMeta("deleted", true);
+  }
+  reject(reason) {
+    const { 0: client, 1: server } = new WebSocketPair();
+    server.accept();
+    server.send(JSON.stringify({ type: "kicked", reason }));
+    server.close(4003, reason);
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/internal/")) return this.internal(request, url.pathname);
     if (url.pathname.startsWith("/img/")) return this.image(request, url);
+    return this.connect(request, url);
+  }
 
+  async internal(request, path) {
+    const b = request.method === "POST" ? await request.json() : {};
+    if (path === "/internal/stats") {
+      return json({ ...this.info(), online: this.ctx.getWebSockets().length, items: this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n,
+        created: this.meta.created || null, deleted: !!this.meta.deleted, hasOwner: !!this.meta.owner });
+    }
+    if (path === "/internal/init") { if (!this.meta.created) await this.init(b.id, b.name, null); return json({ ok: true }); }
+    if (path === "/internal/settings") return json(this.applySettings(b));
+    if (path === "/internal/wipe") { this.wipe(); return json({ ok: true }); }
+    return json({ error: "not_found" }, 404);
+  }
+
+  async connect(request, url) {
     const board = url.searchParams.get("board");
-    const { 0: client, 1: server } = new WebSocketPair();
+    const admin = request.headers.get("x-admin") === "1";
+    let client = url.searchParams.get("client") || "";
+    if (!CLIENT_RE.test(client)) client = "anon-" + randomId(12);
+
+    if (this.meta.deleted && !admin) return this.reject("deleted");
+    if (!this.meta.created) {
+      if (this.hasContent()) await this.init(board, "Общая доска", null);           // boards made before owners existed
+      else if (admin) await this.init(board, "Новая доска", null);
+      else {
+        const st = await call(registry(this.env), "/state");
+        if (st.createPolicy !== "all") return this.reject("notfound");
+        await this.init(board, "Новая доска", client);                             // whoever opens a fresh link owns it
+      }
+    }
+    if (!admin && this.banned(client)) return this.reject("banned");
+
+    const { 0: pair, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
     const used = new Set(this.peers().map(p => p.color));
     const meta = {
-      peer: randomId(5),
-      name: (String(url.searchParams.get("name") || "Гость").slice(0, 32)) || "Гость",
+      peer: randomId(5), client, admin, board,
+      name: cleanName(url.searchParams.get("name"), "Гость").slice(0, 32),
       color: COLORS.find(c => !used.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)],
-      board,
     };
+    meta.role = this.roleFor(meta);
     server.serializeAttachment(meta);
     const items = {};
     for (const row of this.sql.exec("SELECT id, data FROM items")) items[row.id] = JSON.parse(row.data);
-    server.send(JSON.stringify({ type: "init", items, you: meta.peer, color: meta.color, peers: this.peers() }));
+    server.send(JSON.stringify({ type: "init", items, you: meta.peer, color: meta.color, role: meta.role, board: this.info(),
+      peers: this.peers(), bans: isManager(meta.role) ? this.banList() : undefined }));
     this.broadcast({ type: "peers", peers: this.peers() }, server);
-    return new Response(null, { status: 101, webSocket: client });
+    return new Response(null, { status: 101, webSocket: pair });
   }
 
   async image(request, url) {
@@ -119,10 +412,13 @@ export class Board extends DurableObject {
     if (request.method === "GET") {
       const row = this.sql.exec("SELECT type, data FROM images WHERE id = ?", id).toArray()[0];
       if (!row) return new Response("Not found", { status: 404 });
-      return new Response(row.data, { headers: {
-        "content-type": row.type, "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff",
-      } });
+      return new Response(row.data, { headers: { "content-type": row.type, "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
     }
+    const admin = request.headers.get("x-admin") === "1";
+    const client = request.headers.get("x-client-id") || "";
+    if (this.meta.deleted || !this.meta.created) return json({ error: "no_board" }, 404);
+    if (!admin && (!CLIENT_RE.test(client) || this.banned(client))) return json({ error: "forbidden" }, 403);
+    if (this.roleFor({ admin, client }) === "viewer") return json({ error: "view_only" }, 403);
     const type = (request.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     if (!IMAGE_TYPES.has(type)) return json({ error: "bad_type" }, 415);
     const buf = await request.arrayBuffer();
@@ -141,14 +437,23 @@ export class Board extends DurableObject {
     if (!b || now - b.t > 1000) { b = { t: now, n: 0 }; this.budget.set(ws, b); }
     return ++b.n <= 240;
   }
+  viewOnly(ws) {
+    const now = Date.now();
+    if (now - (this.warned.get(ws) || 0) < 3000) return;
+    this.warned.set(ws, now);
+    try { ws.send(JSON.stringify({ type: "error", message: "Сейчас вы можете только смотреть." })); } catch {}
+  }
+  findPeer(peer) { return this.sockets().find(s => s.meta.peer === peer); }
 
   async webSocketMessage(ws, raw) {
     if (typeof raw !== "string" || raw.length > 512 * 1024 || !this.allow(ws)) return;
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m !== "object") return;
     const meta = ws.deserializeAttachment() || {};
+    const role = meta.role, canEdit = role && role !== "viewer";
     switch (m.type) {
       case "set": {
+        if (!canEdit) return this.viewOnly(ws);
         if (typeof m.id !== "string" || !ID_RE.test(m.id)) return;
         const item = cleanItem(m.data, meta.board); if (!item) return;
         const exists = this.sql.exec("SELECT 1 FROM items WHERE id = ?", m.id).toArray().length > 0;
@@ -160,22 +465,25 @@ export class Board extends DurableObject {
         break;
       }
       case "del": {
+        if (!canEdit) return this.viewOnly(ws);
         if (typeof m.id !== "string") return;
         this.sql.exec("DELETE FROM items WHERE id = ?", m.id);
         this.broadcast({ type: "del", id: m.id }, ws);
         break;
       }
       case "clear": {
+        if (!isManager(role)) return;
         this.sql.exec("DELETE FROM items");
         this.sql.exec("DELETE FROM images");
         this.broadcast({ type: "clear" }, ws);
         break;
       }
       case "draft": {
+        if (!canEdit) return;
         if (typeof m.id !== "string" || !ID_RE.test(m.id)) return;
         if (m.end) { this.broadcast({ type: "draft", id: m.id, end: true }, ws); return; }
         const src = m.d && typeof m.d === "object" ? m.d : null;
-        if (!src || !KINDS.has(src.kind) || src.kind === "image" || src.kind === "note" || src.kind === "text") return;
+        if (!src || !["stroke", "line", "arrow", "rect", "ellipse"].includes(src.kind)) return;
         const d = { kind: src.kind, c: String(src.c || "ink").slice(0, 20), w: num(src.w) ? Math.min(Math.max(src.w, 0.5), 80) : 4 };
         if (src.hl) d.hl = true;
         if (src.kind !== "stroke") { if (![src.x1, src.y1, src.x2, src.y2].every(num)) return; Object.assign(d, { x1: src.x1, y1: src.y1, x2: src.x2, y2: src.y2 }); }
@@ -189,21 +497,56 @@ export class Board extends DurableObject {
         break;
       }
       case "name": {
-        meta.name = String(m.name || "Гость").slice(0, 32) || "Гость";
+        meta.name = cleanName(m.name, "Гость").slice(0, 32);
         ws.serializeAttachment(meta);
         this.broadcast({ type: "peers", peers: this.peers() });
+        break;
+      }
+      case "admin": {
+        if (!isManager(role)) return;
+        const target = typeof m.peer === "string" ? this.findPeer(m.peer) : null;
+        // nobody can act on the site owner, and a board's creator cannot be managed by anyone but the owner
+        const protectedTarget = t => !t || t.ws === ws || t.meta.admin || (t.meta.role === "owner" && role !== "admin");
+        if (m.op === "role") {
+          if (protectedTarget(target) || !ROLES.has(m.role)) return;
+          this.sql.exec("INSERT OR REPLACE INTO roles (client, role) VALUES (?, ?)", target.meta.client, m.role);
+          this.refreshRoles();
+        } else if (m.op === "kick" || m.op === "ban") {
+          if (protectedTarget(target)) return;
+          if (m.op === "ban") {
+            this.sql.exec("INSERT INTO bans (id, client, ip, name, at) VALUES (?, ?, ?, ?, ?)", randomId(6), target.meta.client, "", target.meta.name, Date.now());
+          }
+          const victims = this.sockets().filter(s => s.ws === target.ws || (m.op === "ban" && !s.meta.admin && !isManager(s.meta.role) && s.meta.client === target.meta.client));
+          for (const v of victims) {
+            try { v.ws.send(JSON.stringify({ type: "kicked", reason: m.op === "ban" ? "banned" : "kicked" })); v.ws.close(4001, m.op); } catch {}
+          }
+          this.broadcast({ type: "peers", peers: this.peers().filter(p => !victims.some(v => v.meta.peer === p.peer)) });
+          if (m.op === "ban") this.toManagers({ type: "bans", bans: this.banList() });
+        } else if (m.op === "unban") {
+          this.sql.exec("DELETE FROM bans WHERE id = ?", String(m.id || ""));
+          this.toManagers({ type: "bans", bans: this.banList() });
+        } else if (m.op === "settings") {
+          const patch = {};
+          if (m.name !== undefined) patch.name = m.name;
+          if (m.access !== undefined) patch.access = m.access;
+          if (m.resetRoles) this.sql.exec("DELETE FROM roles");
+          this.applySettings(patch);
+        } else if (m.op === "delete") {
+          this.ctx.waitUntil(call(registry(this.env), "/boards/remove", { id: this.meta.id }).catch(() => {}));
+          this.wipe();
+        }
         break;
       }
     }
   }
 
   async webSocketClose(ws, code) {
-    this.budget.delete(ws);
+    this.budget.delete(ws); this.warned.delete(ws);
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, "bye"); } catch {}
     this.broadcast({ type: "peers", peers: this.peers(ws) }, ws);
   }
   async webSocketError(ws) {
-    this.budget.delete(ws);
+    this.budget.delete(ws); this.warned.delete(ws);
     this.broadcast({ type: "peers", peers: this.peers(ws) }, ws);
   }
 }

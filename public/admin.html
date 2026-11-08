@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Мои доски</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one centred column; header, create bar, grid of board cards, settings at the bottom */
+:root {
+  --bg: #f6f7f4; --dot: #c9cfc4; --fg: #1d2420; --muted: #67706a; --panel: #ffffff; --line: #dde2da; --hover: #eef1ec;
+  --accent: #2f6f5e; --accent-fg: #ffffff; --red: #d2462f; --green: #2f8a4a;
+  --shadow: 0 6px 24px rgba(30,40,34,.10), 0 1px 3px rgba(30,40,34,.08);
+  --f-ui: "Figtree", system-ui, sans-serif; --f-hand: "Caveat", "Comic Sans MS", cursive;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #171b19; --dot: #303733; --fg: #e7ebe6; --muted: #98a19a; --panel: #222825; --line: #353d38; --hover: #2c332f;
+  --accent: #6cc3a6; --accent-fg: #0f1a15; --red: #ff7a62; --green: #6ed38a; --shadow: 0 6px 24px rgba(0,0,0,.45); color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--f-ui);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 24px 24px; }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: calc(24px + env(safe-area-inset-top, 0px)) 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font: 700 44px/1 var(--f-hand); letter-spacing: .01em; }
+h1 small { display: block; font: 500 13px var(--f-ui); color: var(--muted); letter-spacing: 0; margin-top: 4px; }
+h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.btn { height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 0 14px;
+  font: 600 14px var(--f-ui); cursor: pointer; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.sm { height: 32px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
+.btn.warn { color: var(--red); }
+.btn.armed { background: var(--red); color: #fff; border-color: var(--red); }
+.btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="text"], input[type="password"] { height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; background: var(--bg); color: var(--fg); font: 500 15px var(--f-ui); min-width: 0; width: 100%; }
+.card { padding: 22px; display: grid; gap: 14px; }
+.auth { max-width: 420px; margin: 8vh auto 0; width: 100%; }
+.auth h1 { font-size: 40px; }
+.auth p { margin: 0; color: var(--muted); }
+.field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.err { color: var(--red); font-size: 14px; min-height: 1.5em; margin: 0; }
+.create { padding: 14px; display: flex; gap: 8px; }
+.create input { flex: 1; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.board { padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.board h3 { margin: 0; font: 700 28px/1.05 var(--f-hand); overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.online { display: inline-flex; align-items: center; gap: 6px; }
+.online i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.online.on { color: var(--green); font-weight: 600; } .online.on i { background: var(--green); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 10px; background: var(--hover); }
+.seg button { min-height: 30px; border: 0; border-radius: 8px; background: none; color: var(--fg); font: 600 12px var(--f-ui); cursor: pointer; padding: 4px 6px; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rename { display: flex; gap: 6px; }
+.rename input { height: 32px; font-size: 14px; }
+.empty { text-align: center; padding: 36px 20px; color: var(--muted); }
+.empty b { display: block; font: 700 32px var(--f-hand); color: var(--fg); margin-bottom: 4px; }
+.settings { padding: 20px; display: grid; gap: 18px; }
+.setrow { display: grid; gap: 8px; }
+.setrow p { margin: 0; font-size: 13px; color: var(--muted); }
+.pwrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.pwrow input { flex: 1 1 160px; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg);
+  padding: 9px 14px; border-radius: 10px; font-size: 14px; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }
+[hidden] { display: none !important; }
+@media (max-width: 520px) { .create { flex-direction: column; } h1 { font-size: 38px; } }
+</style>
+<script src="/theme.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <section class="auth panel card" id="vLoading"><p>Загрузка…</p></section>
+
+  <section class="auth panel card" id="vSetup" hidden>
+    <h1>Настройка владельца</h1>
+    <p id="setupText">Придумайте пароль. С ним вы будете входить в панель и управлять всеми досками.</p>
+    <form id="setupForm" class="card" style="padding:0" autocomplete="on">
+      <label class="field">Пароль (не короче 8 символов)<input type="password" id="sPw" autocomplete="new-password" minlength="8" required></label>
+      <label class="field">Повторите пароль<input type="password" id="sPw2" autocomplete="new-password" minlength="8" required></label>
+      <p class="err" id="sErr"></p>
+      <button class="btn primary" type="submit">Сохранить пароль и войти</button>
+    </form>
+  </section>
+
+  <section class="auth panel card" id="vLogin" hidden>
+    <h1>Вход для владельца</h1>
+    <p>Введите пароль владельца сайта.</p>
+    <form id="loginForm" class="card" style="padding:0">
+      <input type="text" autocomplete="username" value="owner" hidden aria-hidden="true" tabindex="-1">
+      <label class="field">Пароль<input type="password" id="lPw" autocomplete="current-password" required></label>
+      <p class="err" id="lErr"></p>
+      <button class="btn primary" type="submit">Войти</button>
+    </form>
+  </section>
+
+  <div id="vDash" hidden style="display:grid;gap:20px">
+    <header>
+      <h1>Мои доски<small>Панель владельца · видите только вы</small></h1>
+      <button class="btn" id="logout" type="button">Выйти</button>
+    </header>
+
+    <form class="panel create" id="createForm">
+      <input type="text" id="newName" maxlength="60" placeholder="Название новой доски, например «Урок 5»" aria-label="Название новой доски">
+      <button class="btn primary" type="submit">Создать доску</button>
+    </form>
+
+    <h2 id="boardsTitle">Доски</h2>
+    <div class="grid" id="boards"></div>
+
+    <h2>Настройки сайта</h2>
+    <section class="panel settings">
+      <div class="setrow">
+        <b>Кто может создавать новые доски</b>
+        <div class="seg" style="max-width:420px"><button type="button" data-policy="admin">Только я</button><button type="button" data-policy="all">Любой посетитель</button></div>
+        <p id="policyHint"></p>
+      </div>
+      <form class="setrow" id="pwForm">
+        <b>Сменить пароль</b>
+        <div class="pwrow">
+          <input type="password" id="oldPw" placeholder="Текущий пароль" autocomplete="current-password" aria-label="Текущий пароль" required>
+          <input type="password" id="newPw" placeholder="Новый пароль" autocomplete="new-password" minlength="8" aria-label="Новый пароль" required>
+          <button class="btn" type="submit">Сменить</button>
+        </div>
+        <p class="err" id="pwErr"></p>
+      </form>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const views = ["vLoading", "vSetup", "vLogin", "vDash"];
+const show = v => views.forEach(id => $(id).hidden = id !== v);
+let toastT = 0;
+function toast(msg) {
+  let t = document.querySelector(".toast"); if (!t) { t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2800);
+}
+async function api(path, method = "GET", body) {
+  const r = await fetch("/api/" + path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" });
+  let data = {}; try { data = await r.json(); } catch {}
+  return { ok: r.ok, status: r.status, data };
+}
+const ERR = {
+  bad_token: "Ссылка настройки неверная или устарела.", already_set: "Пароль уже задан. Войдите с ним.", short_password: "Пароль должен быть не короче 8 символов.",
+  wrong_password: "Неверный пароль.", locked: "Слишком много попыток. Подождите 10 минут.", not_set: "Владелец ещё не настроен.",
+};
+function armed(b, action, confirmText) {
+  const orig = b.textContent; let t = 0;
+  b.onclick = () => {
+    if (b.classList.contains("armed")) { clearTimeout(t); b.classList.remove("armed"); b.textContent = orig; action(); return; }
+    b.classList.add("armed"); b.textContent = confirmText;
+    t = setTimeout(() => { b.classList.remove("armed"); b.textContent = orig; }, 3500);
+  };
+}
+const setupToken = (location.hash.match(/setup=([A-Za-z0-9_-]+)/) || [])[1] || "";
+
+async function start() {
+  const { data } = await api("state");
+  if (data.isAdmin) { show("vDash"); history.replaceState(null, "", "/admin"); loadDash(data); return; }
+  if (!data.adminSet) {
+    show("vSetup");
+    if (!setupToken) { $("setupText").textContent = "Владелец ещё не настроен. Откройте одноразовую ссылку настройки, которую вам прислали."; $("setupForm").hidden = true; }
+    return;
+  }
+  show("vLogin"); $("lPw").focus();
+}
+$("setupForm").onsubmit = async e => {
+  e.preventDefault();
+  if ($("sPw").value !== $("sPw2").value) { $("sErr").textContent = "Пароли не совпадают."; return; }
+  const r = await api("setup", "POST", { token: setupToken, password: $("sPw").value });
+  if (!r.ok) { $("sErr").textContent = ERR[r.data.error] || "Не получилось. Попробуйте ещё раз."; return; }
+  history.replaceState(null, "", "/admin"); toast("Пароль сохранён. Вы вошли как владелец."); start();
+};
+$("loginForm").onsubmit = async e => {
+  e.preventDefault();
+  const r = await api("login", "POST", { password: $("lPw").value });
+  if (!r.ok) { $("lErr").textContent = ERR[r.data.error] || "Не получилось войти."; $("lPw").select(); return; }
+  $("lPw").value = ""; start();
+};
+$("logout").onclick = async () => { await api("logout", "POST", {}); show("vLogin"); };
+
+/* ---------- dashboard ---------- */
+let policy = "admin", refreshT = 0;
+function renderPolicy() {
+  document.querySelectorAll("[data-policy]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.policy === policy)));
+  $("policyHint").textContent = policy === "all"
+    ? "Любой, кто откроет главную страницу, получит новую доску и будет управлять ею сам. Вы видите и управляете всеми досками."
+    : "Новые доски создаёте только вы. Посетители главной страницы увидят просьбу попросить у вас ссылку.";
+}
+document.querySelectorAll("[data-policy]").forEach(b => b.onclick = async () => {
+  const r = await api("settings", "POST", { createPolicy: b.dataset.policy });
+  if (r.ok) { policy = r.data.createPolicy; renderPolicy(); toast("Настройка сохранена."); }
+});
+async function loadDash(state) {
+  policy = state?.createPolicy || policy; renderPolicy();
+  await loadBoards();
+  clearInterval(refreshT); refreshT = setInterval(() => { if (!document.hidden && !document.activeElement?.closest?.(".rename")) loadBoards(); }, 15000);
+}
+const fmtDate = t => t ? new Date(t).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }) : "";
+const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return n + " " + (m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many); };
+async function loadBoards() {
+  const r = await api("boards");
+  if (r.status === 401) { show("vLogin"); return; }
+  const list = r.data.boards || [];
+  $("boardsTitle").textContent = list.length ? "Доски · " + list.length : "Доски";
+  const grid = $("boards"); grid.innerHTML = "";
+  if (!list.length) {
+    grid.innerHTML = `<div class="panel empty" style="grid-column:1/-1"><b>Досок пока нет</b>Создайте первую доску выше: ссылку можно сразу отправить друзьям.</div>`;
+    return;
+  }
+  for (const b of list) grid.appendChild(boardCard(b));
+}
+function boardCard(b) {
+  const el = document.createElement("article"); el.className = "panel board";
+  const link = location.origin + "/b/" + b.id;
+  el.innerHTML = `<h3></h3>
+    <div class="meta"><span class="online${b.online ? " on" : ""}"><i></i><span class="on-t"></span></span><span class="it-t"></span><span class="dt-t"></span></div>
+    <div class="seg" role="group" aria-label="Кто может рисовать"><button type="button" data-a="edit">Все рисуют</button><button type="button" data-a="view">Только смотрят</button></div>
+    <div class="actions">
+      <a class="btn sm primary" target="_blank" rel="noopener">Открыть</a>
+      <button class="btn sm" type="button" data-copy>Ссылка</button>
+      <button class="btn sm" type="button" data-rename>Переименовать</button>
+      <button class="btn sm warn" type="button" data-del>Удалить</button>
+    </div>`;
+  el.querySelector("h3").textContent = b.name;
+  el.querySelector(".on-t").textContent = b.online ? plural(b.online, "человек", "человека", "человек") + " онлайн" : "никого нет";
+  el.querySelector(".it-t").textContent = plural(b.items || 0, "рисунок", "рисунка", "рисунков");
+  el.querySelector(".dt-t").textContent = b.created ? "с " + fmtDate(b.created) : "";
+  el.querySelector("a").href = link;
+  el.querySelectorAll("[data-a]").forEach(btn => {
+    btn.setAttribute("aria-pressed", String((b.access || "edit") === btn.dataset.a));
+    btn.onclick = async () => {
+      const r = await api("boards/" + b.id, "PATCH", { access: btn.dataset.a });
+      if (r.ok) { b.access = btn.dataset.a; el.querySelectorAll("[data-a]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.a === b.access))); toast(b.access === "view" ? "Теперь на этой доске все только смотрят." : "Теперь на этой доске все могут рисовать."); }
+    };
+  });
+  el.querySelector("[data-copy]").onclick = async () => {
+    try { await navigator.clipboard.writeText(link); toast("Ссылка скопирована."); } catch { prompt("Ссылка на доску:", link); }
+  };
+  el.querySelector("[data-rename]").onclick = () => {
+    const h = el.querySelector("h3");
+    const box = document.createElement("form"); box.className = "rename";
+    box.innerHTML = `<input type="text" maxlength="60" aria-label="Новое название"><button class="btn sm primary" type="submit">Сохранить</button>`;
+    const inp = box.querySelector("input"); inp.value = b.name;
+    h.replaceWith(box); inp.focus(); inp.select();
+    box.onsubmit = async e => {
+      e.preventDefault();
+      const name = inp.value.trim(); if (!name) return;
+      const r = await api("boards/" + b.id, "PATCH", { name });
+      if (r.ok) { b.name = r.data.name || name; h.textContent = b.name; toast("Название сохранено."); }
+      box.replaceWith(h);
+    };
+    inp.addEventListener("keydown", e => { if (e.key === "Escape") box.replaceWith(h); });
+  };
+  armed(el.querySelector("[data-del]"), async () => {
+    const r = await api("boards/" + b.id, "DELETE");
+    if (r.ok) { el.remove(); toast("Доска удалена."); loadBoards(); }
+  }, "Удалить навсегда?");
+  return el;
+}
+$("createForm").onsubmit = async e => {
+  e.preventDefault();
+  const r = await api("boards", "POST", { name: $("newName").value.trim() || "Новая доска" });
+  if (!r.ok) { toast("Не получилось создать доску."); return; }
+  $("newName").value = "";
+  const link = location.origin + "/b/" + r.data.id;
+  try { await navigator.clipboard.writeText(link); toast("Доска создана, ссылка скопирована."); } catch { toast("Доска создана."); }
+  loadBoards();
+};
+$("pwForm").onsubmit = async e => {
+  e.preventDefault();
+  const r = await api("password", "POST", { old: $("oldPw").value, password: $("newPw").value });
+  if (!r.ok) { $("pwErr").textContent = ERR[r.data.error] || "Не получилось сменить пароль."; return; }
+  $("pwErr").textContent = ""; $("oldPw").value = $("newPw").value = ""; toast("Пароль изменён.");
+};
+start();
+})();
+</script>
+</body>
+</html>

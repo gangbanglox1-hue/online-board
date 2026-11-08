@@ -139,67 +139,46 @@ kbd { position: absolute; right: 3px; bottom: 1px; font: 500 9px var(--f-ui); op
 .szprev i { display: block; border-radius: 50%; }
 .szval { min-width: 34px; font: 600 12px var(--f-ui); color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
 @media (max-width: 480px) { .szwrap { gap: 6px; padding: 0 2px; } .szwrap input[type="range"] { width: 84px; } .szprev { display: none; } .szval { min-width: 0; font-size: 11px; } #style button { min-width: 28px; padding: 0 4px; } }
+.rolebadge { font: 600 11px var(--f-ui); padding: 2px 8px; border-radius: 99px; background: var(--hover); color: var(--muted); white-space: nowrap; justify-self: end; }
+.rolebadge.mgr { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+#managePop { width: min(390px, calc(100vw - 32px)); }
+.msec { display: grid; gap: 8px; }
+.msec + .msec { border-top: 1px solid var(--line); padding-top: 12px; }
+.mlabel { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.mrow { display: flex; gap: 6px; }
+.mrow input { flex: 1; min-width: 0; height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--fg); font: 500 14px var(--f-ui); box-sizing: border-box; }
+.mrow input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.mbtn { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 0 10px; font: 600 12px var(--f-ui); cursor: pointer; white-space: nowrap; text-decoration: none; display: inline-grid; place-items: center; }
+.mbtn:hover { background: var(--hover); }
+.mbtn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.mbtn.warn { color: var(--red); }
+.mbtn.armed { background: var(--red); color: #fff; border-color: var(--red); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 10px; background: var(--hover); }
+.seg button { min-height: 32px; border: 0; border-radius: 8px; background: none; color: var(--fg); font: 600 12px var(--f-ui); cursor: pointer; padding: 4px 6px; }
+.seg button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.12); color: var(--accent); }
+.mhint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.prow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 8px; row-gap: 6px; }
+.prow .pdot { width: 10px; height: 10px; border-radius: 50%; }
+.prow .pname { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .pname small { color: var(--muted); font-weight: 500; margin-left: 6px; font-size: 12px; }
+.pact { grid-column: 2 / -1; display: flex; gap: 4px; flex-wrap: wrap; }
+.mfoot { display: flex !important; gap: 6px; flex-wrap: wrap; align-items: center; }
+.mfoot .grow { margin-right: auto; }
+.empty { font-size: 13px; color: var(--muted); }
+.blocker { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); padding: 16px; }
+.bcard { max-width: 380px; padding: 24px 22px; text-align: center; display: grid; gap: 10px; }
+.bcard h2 { margin: 0; font: 700 36px/1.05 var(--f-hand); text-wrap: balance; }
+.bcard p { margin: 0; color: var(--muted); line-height: 1.5; }
+.brow { display: flex; gap: 8px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
+.vo-label { display: none; padding: 0 10px 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+body.viewonly .vo-label { display: block; }
+body.viewonly #dock [data-tool]:not([data-tool="pan"]), body.viewonly #imgBtn, body.viewonly #undoBtn, body.viewonly #redoBtn, body.viewonly #dock .sep, body.viewonly #style { display: none !important; }
 @media (max-width: 420px) { .chip b { display: none; } }
 @media (max-width: 560px) { .chip .m { display: none; } #zoomOut, #zoomIn, #zoomLbl, .tb .sep { display: none; } #shareBtn span { display: none; } .hint h2 { font-size: 36px; } }
 @media (prefers-reduced-motion: reduce) { .cur { transition: none; } }
 </style>
-<script>
-/* Per-viewer colour themes. Stored only in this browser; drawings keep their colour names, each viewer sees them in their own palette. */
-(() => {
-  const LIGHT = { bg: "#f6f7f4", dot: "#c9cfc4", fg: "#1d2420", muted: "#67706a", panel: "#ffffff", line: "#dde2da", hover: "#eef1ec", accent: "#2f6f5e", "accent-fg": "#ffffff", sel: "#2f6f5e",
-    ink: "#1d2420", red: "#d2462f", blue: "#2c63c9", green: "#2f8a4a", orange: "#e08a1e", violet: "#7a4cc2",
-    "note-yellow": "#fbe9a0", "note-pink": "#f8c9d2", "note-blue": "#c6e0f5", "note-green": "#cdeccb", "note-fg": "#2a2a22",
-    shadow: "0 6px 24px rgba(30,40,34,.14), 0 1px 3px rgba(30,40,34,.08)" };
-  const DARK = { bg: "#171b19", dot: "#303733", fg: "#e7ebe6", muted: "#98a19a", panel: "#222825", line: "#353d38", hover: "#2c332f", accent: "#6cc3a6", "accent-fg": "#0f1a15", sel: "#6cc3a6",
-    ink: "#eef1ec", red: "#ff7a62", blue: "#79a6ff", green: "#6ed38a", orange: "#ffb04d", violet: "#b996ff",
-    "note-yellow": "#e9d27c", "note-pink": "#e6a7b4", "note-blue": "#9fc4e3", "note-green": "#a9d6a6", "note-fg": "#1d1d17",
-    shadow: "0 6px 24px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.3)" };
-  const THEMES = [
-    { id: "system", name: "Как в системе" },
-    { id: "light", name: "Светлая", base: "light" },
-    { id: "dark", name: "Тёмная", base: "dark" },
-    { id: "paper", name: "Бумага", base: "light", t: { bg: "#f2ece0", dot: "#d9cfbc", fg: "#2b2620", muted: "#73695b", panel: "#fbf8f2", line: "#e3dac9", hover: "#ece4d4", accent: "#8c5a2b", sel: "#8c5a2b", ink: "#2b2620" } },
-    { id: "lavender", name: "Лаванда", base: "light", t: { bg: "#f4f1fa", dot: "#d5cde6", fg: "#28213a", muted: "#6c6482", panel: "#ffffff", line: "#e2dbef", hover: "#ece6f7", accent: "#6b46c1", sel: "#6b46c1", ink: "#28213a" } },
-    { id: "mint", name: "Мята", base: "light", t: { bg: "#ecf6f1", dot: "#c3dccf", fg: "#16302a", muted: "#58706a", panel: "#fbfffd", line: "#d3e7dd", hover: "#e2f0e9", accent: "#12806a", sel: "#12806a", ink: "#16302a" } },
-    { id: "ocean", name: "Океан", base: "dark", t: { bg: "#0e1a28", dot: "#21344a", fg: "#e3edf7", muted: "#8ea3b8", panel: "#15263a", line: "#24384f", hover: "#1c3048", accent: "#4cc2e0", "accent-fg": "#06202a", sel: "#4cc2e0", ink: "#eaf2fb" } },
-    { id: "sunset", name: "Закат", base: "dark", t: { bg: "#211a1e", dot: "#3a2e34", fg: "#f6e9e2", muted: "#b39c95", panel: "#2c2228", line: "#40333a", hover: "#362a30", accent: "#ff8a5c", "accent-fg": "#2a1208", sel: "#ff8a5c", ink: "#f8eee8" } },
-    { id: "chalk", name: "Школьная доска", base: "dark", t: { bg: "#22372c", dot: "#2f4a3b", fg: "#eef3ea", muted: "#a6b8aa", panel: "#2a4234", line: "#3a5646", hover: "#33503f", accent: "#f2d16b", "accent-fg": "#2a2306", sel: "#f2d16b", ink: "#f4f6ef" } },
-    { id: "contrast", name: "Контраст", base: "light", t: { bg: "#ffffff", dot: "#b0b0b0", fg: "#000000", muted: "#333333", panel: "#ffffff", line: "#000000", hover: "#e6e6e6", accent: "#0038d9", sel: "#0038d9", ink: "#000000", red: "#c4000f", blue: "#0038d9", green: "#00701c", orange: "#b35900", violet: "#5b00b8" } },
-  ];
-  const HEX = /^#[0-9a-f]{6}$/i;
-  const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
-  const hex = a => "#" + a.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
-  const mix = (a, b, t) => { const x = rgb(a), y = rgb(b); return hex(x.map((v, i) => v + (y[i] - v) * t)); };
-  const lum = h => { const [r, g, b] = rgb(h).map(v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }); return .2126 * r + .7152 * g + .0722 * b; };
-  const systemDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
-  function tokensFor(s) {
-    if (!s || s.id === "system") return { ...(systemDark() ? DARK : LIGHT), _dark: systemDark() };
-    if (s.id === "custom") {
-      const bg = HEX.test(s.bg) ? s.bg : "#f6f7f4", accent = HEX.test(s.accent) ? s.accent : "#2f6f5e";
-      const dark = lum(bg) < .2, fg = dark ? "#eef1ec" : "#1d2420";
-      return { ...(dark ? DARK : LIGHT), bg, fg, ink: fg, accent, sel: accent, "accent-fg": lum(accent) > .4 ? "#111111" : "#ffffff",
-        dot: mix(bg, fg, .17), muted: mix(bg, fg, .58), line: mix(bg, fg, .14), hover: mix(bg, fg, .07),
-        panel: dark ? mix(bg, "#ffffff", .06) : mix(bg, "#ffffff", .75), _dark: dark };
-    }
-    const th = THEMES.find(t => t.id === s.id) || THEMES[0];
-    if (!th.base) return tokensFor({ id: "system" });
-    return { ...(th.base === "dark" ? DARK : LIGHT), ...(th.t || {}), _dark: th.base === "dark" };
-  }
-  function apply(s) {
-    const root = document.documentElement;
-    for (const k of Object.keys(LIGHT)) root.style.removeProperty("--" + k);
-    if (s && s.id !== "system") {
-      const t = tokensFor(s);
-      for (const k of Object.keys(LIGHT)) root.style.setProperty("--" + k, t[k]);
-      root.style.colorScheme = t._dark ? "dark" : "light";
-    } else root.style.colorScheme = "";
-  }
-  let saved = { id: "system" };
-  try { const v = JSON.parse(localStorage.getItem("board.theme") || "null"); if (v && typeof v.id === "string") saved = v; } catch {}
-  window.boardTheme = { THEMES, tokensFor, apply, saved };
-  apply(saved);
-})();
-</script>
+<script src="/theme.js"></script>
 </head>
 <body>
 
@@ -218,17 +197,52 @@ kbd { position: absolute; right: 3px; bottom: 1px; font: 500 9px var(--f-ui); op
 </div>
 
 <div class="top">
-  <div class="chip panel"><span class="dotst" id="st"></span><b>Общая доска</b><span class="m" id="stText">подключение…</span><span class="faces" id="faces"></span><button type="button" id="nameBtn" class="namebtn" title="Изменить имя" aria-label="Изменить имя">✎</button></div>
+  <div class="chip panel"><span class="dotst" id="st"></span><b id="boardName">Общая доска</b><span class="rolebadge" id="roleBadge" hidden></span><span class="m" id="stText">подключение…</span><span class="faces" id="faces"></span><button type="button" id="nameBtn" class="namebtn" title="Изменить имя" aria-label="Изменить имя">✎</button></div>
   <div class="tb panel" id="viewBar">
     <button type="button" id="zoomOut" title="Отдалить (−)" aria-label="Отдалить"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
     <button type="button" id="zoomLbl" title="Сбросить масштаб до 100%">100%</button>
     <button type="button" id="zoomIn" title="Приблизить (+)" aria-label="Приблизить"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
     <button type="button" id="fitBtn" title="Показать всё (F)" aria-label="Показать всё"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     <span class="sep"></span>
+    <button type="button" id="manageBtn" title="Управление доской и людьми" aria-label="Управление доской" aria-expanded="false" aria-controls="managePop" hidden><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><circle cx="12" cy="10" r="2.4"/><path d="M8 16c.8-1.8 2.2-2.7 4-2.7s3.2.9 4 2.7"/></svg></button>
     <button type="button" id="themeBtn" title="Оформление: цвета доски (только у вас)" aria-label="Оформление" aria-expanded="false" aria-controls="themePop"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 005-5c0-4-4-7.6-9-7.6z"/><circle cx="7.5" cy="11.5" r="1.2"/><circle cx="10" cy="7.5" r="1.2"/><circle cx="14.5" cy="7.5" r="1.2"/></svg></button>
     <button type="button" id="shareBtn" title="Скопировать ссылку на доску"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 006 0l3-3a4 4 0 00-6-6l-1 1"/><path d="M14 10a4 4 0 00-6 0l-3 3a4 4 0 006 6l1-1"/></svg><span>Пригласить</span></button>
     <button type="button" id="exportBtn" title="Скачать PNG" aria-label="Скачать PNG"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
     <span id="clearBox" style="display:contents"></span>
+  </div>
+</div>
+
+<div class="pop panel" id="managePop" role="dialog" aria-label="Управление доской" hidden>
+  <div class="pop-h"><b>Управление доской</b><span id="mRole"></span></div>
+  <div class="msec">
+    <label class="mlabel" for="mName">Название</label>
+    <div class="mrow"><input id="mName" maxlength="60" autocomplete="off"><button type="button" class="mbtn primary" id="mNameSave">Сохранить</button></div>
+  </div>
+  <div class="msec">
+    <div class="mlabel">Кто может рисовать</div>
+    <div class="seg" role="group" aria-label="Доступ по ссылке"><button type="button" data-access="edit">Все по ссылке</button><button type="button" data-access="view">Все только смотрят</button></div>
+    <p class="mhint">Отдельным людям можно разрешить или запретить рисовать в списке ниже. Создатель доски и администратор рисуют всегда.</p>
+  </div>
+  <div class="msec">
+    <div class="mlabel">Сейчас на доске · <span id="mPeopleN">0</span></div>
+    <ul class="plist" id="mPeople"></ul>
+  </div>
+  <div class="msec" id="mBansSec" hidden>
+    <div class="mlabel">Заблокированы</div>
+    <ul class="plist" id="mBans"></ul>
+  </div>
+  <div class="msec mfoot">
+    <a class="mbtn grow" id="mAll" href="/admin" hidden>Все доски →</a>
+    <button type="button" class="mbtn" id="mClear">Очистить доску</button>
+    <button type="button" class="mbtn warn" id="mDelete">Удалить доску</button>
+  </div>
+</div>
+
+<div class="blocker" id="blocker" hidden>
+  <div class="panel bcard" role="alertdialog" aria-labelledby="bTitle" aria-describedby="bText">
+    <h2 id="bTitle"></h2>
+    <p id="bText"></p>
+    <div class="brow"><a class="mbtn" href="/" id="bHome">На главную</a><button type="button" class="mbtn primary" id="bRetry" hidden>Подключиться снова</button></div>
   </div>
 </div>
 
@@ -259,6 +273,7 @@ kbd { position: absolute; right: 3px; bottom: 1px; font: 500 9px var(--f-ui); op
   <button type="button" id="imgBtn" title="Картинка (I), или Ctrl+V, или перетащите файл" aria-label="Вставить картинку"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l5-5 4 4 2-2 3.5 3.5"/></svg><kbd>I</kbd></button>
   <button type="button" data-tool="erase" title="Ластик (E)" aria-label="Ластик"><svg viewBox="0 0 24 24"><path d="M8 20h12"/><path d="M5 15l9-9 5 5-8 9H9z"/></svg><kbd>E</kbd></button>
   <button type="button" data-tool="pan" title="Рука (H, пробел или правая кнопка мыши)" aria-label="Рука"><svg viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V12M11 11V4.5a1.5 1.5 0 013 0V12M14 11V6.5a1.5 1.5 0 013 0V14c0 4-2.5 7-6 7-2.5 0-4-1.2-5.5-3.5L4 14.5a1.5 1.5 0 012.5-1.6L8 15"/></svg><kbd>H</kbd></button>
+  <span class="vo-label">Только просмотр</span>
   <span class="sep"></span>
   <button type="button" id="undoBtn" title="Отменить (Ctrl+Z)" aria-label="Отменить" disabled><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/></svg></button>
   <button type="button" id="redoBtn" title="Повторить (Ctrl+Shift+Z)" aria-label="Повторить" disabled><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 000 10h3"/></svg></button>
@@ -591,7 +606,7 @@ function drawSelection() {
       ctx.fillRect(b.X - hs / 2, b.Y - hs / 2, hs, hs); ctx.strokeRect(b.X - hs / 2, b.Y - hs / 2, hs, hs);
     }
   }
-  if (drag || resizing || mode === "connecting") { selDel.hidden = true; return; }
+  if (drag || resizing || !editable()) { selDel.hidden = true; return; }
   const sx = Math.min(innerWidth - 40, Math.max(8, (b.X + pad) * view.z + view.x + 8));
   const sy = Math.min(innerHeight - 40, Math.max(8, (b.y - pad) * view.z + view.y - 40));
   selDel.style.transform = `translate(${sx}px,${sy}px)`;
@@ -629,7 +644,7 @@ function renderDom() {
   $("hint").hidden = items.size > 0 || mode === "connecting";
 }
 function editDom(el) {
-  if (mode === "connecting") return;
+  if (!editable()) return;
   select(null);
   el.classList.add("editing");
   el.contentEditable = "plaintext-only";
@@ -648,7 +663,7 @@ function saveDom(el) {
 }
 function domDown(e) {
   const el = e.currentTarget, id = el.dataset.id;
-  if (el.classList.contains("editing") || tool === "pan" || spaceDown || e.button !== 0 || mode === "connecting") return;
+  if (el.classList.contains("editing") || tool === "pan" || spaceDown || e.button !== 0 || !editable()) return;
   e.stopPropagation();
   if (tool === "erase") { removeItem(id, true); return; }
   select(id);
@@ -695,7 +710,7 @@ function removeItem(id, rec) {
 function applyOp(id, data) { if (data) rawSet(id, data); else rawDelete(id); draw(); }
 function undo() { const op = undoStack.pop(); if (!op) return; redoStack.push(op); applyOp(op.id, op.before); syncUndo(); }
 function redo() { const op = redoStack.pop(); if (!op) return; undoStack.push(op); applyOp(op.id, op.after); syncUndo(); }
-function syncUndo() { $("undoBtn").disabled = !undoStack.length; $("redoBtn").disabled = !redoStack.length; }
+function syncUndo() { $("undoBtn").disabled = !undoStack.length || !editable(); $("redoBtn").disabled = !redoStack.length || !editable(); }
 $("undoBtn").onclick = undo; $("redoBtn").onclick = redo;
 
 /* ---------- live drafts: others see the line while it is drawn ---------- */
@@ -726,7 +741,7 @@ function startPan(e) { panning = { sx: e.clientX, sy: e.clientY, v: { ...view } 
 stage.addEventListener("contextmenu", e => e.preventDefault());
 stage.addEventListener("pointerdown", e => {
   const onIt = e.target.closest(".it");
-  if (onIt && e.button === 0 && (onIt.classList.contains("editing") || (tool !== "pan" && !spaceDown && mode !== "connecting"))) return;
+  if (onIt && e.button === 0 && (onIt.classList.contains("editing") || (tool !== "pan" && !spaceDown && editable()))) return;
   if (document.activeElement?.isContentEditable) document.activeElement.blur();
   stage.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -740,6 +755,7 @@ stage.addEventListener("pointerdown", e => {
   // right or middle button, the hand tool or a held space bar move the board
   if (e.button === 2 || e.button === 1 || tool === "pan" || spaceDown) { e.preventDefault(); startPan(e); return; }
   if (e.button !== 0 || mode === "connecting") return;
+  if (!editable()) { startPan(e); return; }   // people who may only watch drag the board around
   const w = toWorld(e.clientX, e.clientY);
   if (nearResizeHandle(e.clientX, e.clientY)) {
     const it = items.get(selected);
@@ -908,14 +924,15 @@ async function insertImages(files, at) {
   files = files.filter(f => f.type.startsWith("image/"));
   if (!files.length) return;
   if (mode !== "shared") { toast("Нет связи с доской. Попробуйте через пару секунд."); return; }
+  if (!editable()) { toast("Сейчас вы можете только смотреть."); return; }
   const pos = at || toWorld(innerWidth / 2, innerHeight / 2);
   let off = 0;
   for (const f of files) {
     toast("Загружаю картинку…", 20000);
     try {
       const { blob, w, h } = await prepareImage(f);
-      const res = await fetch(`/img/${boardId}`, { method: "POST", body: blob, headers: { "content-type": blob.type } });
-      if (!res.ok) throw new Error(res.status === 413 ? "Картинка слишком большая." : res.status === 507 ? "На этой доске закончилось место для картинок." : "Не удалось загрузить картинку.");
+      const res = await fetch(`/img/${boardId}`, { method: "POST", body: blob, headers: { "content-type": blob.type, "x-client-id": clientId } });
+      if (!res.ok) throw new Error(res.status === 413 ? "Картинка слишком большая." : res.status === 507 ? "На этой доске закончилось место для картинок." : res.status === 403 ? "Сейчас вы можете только смотреть." : "Не удалось загрузить картинку.");
       const { src } = await res.json();
       const im = getImg(src);
       const maxW = Math.min(640, innerWidth * .6 / view.z), maxH = Math.min(480, innerHeight * .6 / view.z);
@@ -998,6 +1015,7 @@ function wrapText(g, text, x, y, maxW, lh) {
 /* ---------- clear ---------- */
 const clearBox = $("clearBox");
 function renderClear(confirming) {
+  clearBox.style.display = isMgr() ? "contents" : "none";
   clearBox.innerHTML = confirming
     ? `<button type="button" id="cNo">Отмена</button><button type="button" class="danger" id="cYes">Стереть всё для всех</button>`
     : `<button type="button" id="clearBtn" title="Очистить доску" aria-label="Очистить доску"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button>`;
@@ -1017,12 +1035,12 @@ addEventListener("keydown", e => {
   if (e.target.isContentEditable || (e.target.tagName === "INPUT" && e.target.type !== "range")) return;
   const k = e.key.toLowerCase();
   if (e.key === "Shift" && draft && draft.kind === "stroke") { updateStroke(true); return; }
-  if ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || k === "z")) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && (e.code === "KeyY" || k === "y")) { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || k === "z") && editable()) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.code === "KeyY" || k === "y") && editable()) { e.preventDefault(); redo(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.code === "Space") { if (!spaceDown) { spaceDown = true; stage.style.cursor = "grab"; } e.preventDefault(); return; }
-  if ((k === "delete" || k === "backspace") && selected) { removeItem(selected, true); return; }
-  if (k === "escape") { if (!themePop.hidden) { closeThemes(); return; } select(null); return; }
+  if ((k === "delete" || k === "backspace") && selected && editable()) { removeItem(selected, true); return; }
+  if (k === "escape") { if (!themePop.hidden) { closeThemes(); return; } if (!managePop.hidden) { closeManage(); return; } select(null); return; }
   if (e.code === "BracketLeft" || e.code === "BracketRight") { nudgeSize(e.code === "BracketRight" ? 1 : -1); return; }
   if (k === "enter" && selected) { const el = domEls.get(selected); if (el) { e.preventDefault(); editDom(el); } return; }
   if (k === "+" || k === "=") { zoomAt(innerWidth / 2, innerHeight / 2, view.z * 1.25); return; }
@@ -1084,7 +1102,7 @@ function setStatus() {
   stEl.className = "dotst" + (mode === "shared" ? " on" : mode === "offline" ? " ro" : "");
   stText.textContent = mode === "connecting" ? "подключение…"
     : mode === "offline" ? "нет связи, переподключаюсь…"
-    : (others ? `ещё ${others} на доске` : "сохраняется автоматически");
+    : (others ? `ещё ${others} на доске` : myRole === "viewer" ? "можно только смотреть" : "сохраняется автоматически");
 }
 function sendCursor(e) {
   const now = performance.now(); if (now - lastSend < 40) return; lastSend = now;
@@ -1149,6 +1167,127 @@ $("shareBtn").onclick = async () => {
   catch { prompt("Скопируйте ссылку на доску:", link); }
 };
 
+/* ---------- roles and board management ---------- */
+let myRole = "editor", boardInfo = { name: "Общая доска", access: "edit" }, bans = [], stopped = false, forcedPan = false;
+function isMgr() { return myRole === "admin" || myRole === "owner"; }
+function editable() { return mode === "shared" && myRole !== "viewer"; }
+const ROLE_LABEL = { admin: "админ", owner: "создатель", editor: "рисует", viewer: "смотрит" };
+const managePop = $("managePop"), manageBtn = $("manageBtn");
+let clientId = "";
+try { clientId = localStorage.getItem("board.client") || ""; } catch {}
+if (!/^[A-Za-z0-9_-]{16,64}$/.test(clientId)) {
+  clientId = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(18)))).replace(/\+/g, "-").replace(/\//g, "_");
+  try { localStorage.setItem("board.client", clientId); } catch {}
+}
+function applyRole(prev) {
+  document.body.classList.toggle("viewonly", myRole === "viewer");
+  if (myRole === "viewer" && tool !== "pan") { if (draft) { endDraft(draft._id); draft = null; } forcedPan = true; setTool("pan"); }
+  else if (myRole !== "viewer" && forcedPan) { forcedPan = false; setTool("pen"); }
+  if (myRole === "viewer") select(null);
+  manageBtn.hidden = !isMgr();
+  if (!isMgr()) closeManage();
+  const rb = $("roleBadge");
+  rb.hidden = myRole === "editor";
+  rb.textContent = myRole === "viewer" ? "только просмотр" : ROLE_LABEL[myRole];
+  rb.className = "rolebadge" + (isMgr() ? " mgr" : "");
+  if (prev && prev !== myRole) {
+    if (myRole === "viewer") toast("Владелец доски разрешил вам только смотреть.");
+    else if (prev === "viewer") toast("Теперь вы можете рисовать.");
+  }
+  renderClear(false); syncUndo(); setStatus(); renderManage(); draw();
+}
+function renderBoardInfo() {
+  $("boardName").textContent = boardInfo.name;
+  document.title = boardInfo.name;
+  renderManage();
+}
+function mbtn(text, onclick, cls) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "mbtn" + (cls ? " " + cls : ""); b.textContent = text;
+  if (onclick) b.onclick = onclick;
+  return b;
+}
+// a dangerous button asks once more before acting
+function armed(b, action, confirmText) {
+  const orig = b.textContent; let t = 0;
+  b.onclick = () => {
+    if (b.classList.contains("armed")) { clearTimeout(t); b.classList.remove("armed"); b.textContent = orig; action(); return; }
+    b.classList.add("armed"); b.textContent = confirmText;
+    t = setTimeout(() => { b.classList.remove("armed"); b.textContent = orig; }, 3500);
+  };
+  return b;
+}
+const adminOp = m => send({ type: "admin", ...m });
+function renderManage() {
+  if (managePop.hidden) return;
+  $("mRole").textContent = myRole === "admin" ? "вы администратор сайта" : "вы создатель доски";
+  if (document.activeElement !== $("mName")) $("mName").value = boardInfo.name;
+  managePop.querySelectorAll("[data-access]").forEach(b => b.setAttribute("aria-pressed", String(boardInfo.access === b.dataset.access)));
+  $("mPeopleN").textContent = peers.length;
+  const ul = $("mPeople"); ul.innerHTML = "";
+  const order = { admin: 0, owner: 1, editor: 2, viewer: 3 };
+  for (const p of [...peers].sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9))) {
+    const me = p.peer === myPeer;
+    const li = document.createElement("li"); li.className = "prow";
+    li.innerHTML = `<span class="pdot"></span><span class="pname"></span><span class="rolebadge"></span><span class="pact"></span>`;
+    li.querySelector(".pdot").style.background = p.color;
+    const nm = li.querySelector(".pname"); nm.textContent = p.name || "Гость";
+    if (me) { const sm = document.createElement("small"); sm.textContent = "вы"; nm.appendChild(sm); }
+    const rb = li.querySelector(".rolebadge"); rb.textContent = ROLE_LABEL[p.role] || "";
+    if (p.role === "admin" || p.role === "owner") rb.classList.add("mgr");
+    const act = li.querySelector(".pact");
+    const prot = me || p.role === "admin" || (p.role === "owner" && myRole !== "admin");
+    if (prot) act.remove();
+    else act.append(
+      mbtn(p.role === "viewer" ? "Разрешить рисовать" : "Только смотреть", () => adminOp({ op: "role", peer: p.peer, role: p.role === "viewer" ? "editor" : "viewer" })),
+      mbtn("Выгнать", () => adminOp({ op: "kick", peer: p.peer })),
+      armed(mbtn("Заблокировать", null, "warn"), () => adminOp({ op: "ban", peer: p.peer }), "Точно заблокировать?"),
+    );
+    ul.appendChild(li);
+  }
+  $("mBansSec").hidden = !bans.length;
+  const bl = $("mBans"); bl.innerHTML = "";
+  for (const bn of bans) {
+    const li = document.createElement("li"); li.className = "prow";
+    li.innerHTML = `<span class="pdot" style="background:var(--muted)"></span><span class="pname"></span>`;
+    const nm = li.querySelector(".pname"); nm.textContent = bn.name || "Гость";
+    const sm = document.createElement("small"); sm.textContent = new Date(bn.at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }); nm.appendChild(sm);
+    li.appendChild(mbtn("Разблокировать", () => adminOp({ op: "unban", id: bn.id })));
+    bl.appendChild(li);
+  }
+  $("mAll").hidden = myRole !== "admin";
+}
+function closeManage() { managePop.hidden = true; manageBtn.setAttribute("aria-expanded", "false"); }
+manageBtn.onclick = () => {
+  if (!managePop.hidden) { closeManage(); return; }
+  closeThemes(); managePop.hidden = false; manageBtn.setAttribute("aria-expanded", "true"); renderManage();
+};
+document.addEventListener("pointerdown", e => { if (!managePop.hidden && !managePop.contains(e.target) && !manageBtn.contains(e.target)) closeManage(); }, true);
+const saveName = () => { const v = $("mName").value.trim(); if (v && v !== boardInfo.name) { adminOp({ op: "settings", name: v }); toast("Название сохранено."); } };
+$("mNameSave").onclick = saveName;
+$("mName").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { saveName(); $("mName").blur(); } });
+managePop.querySelectorAll("[data-access]").forEach(b => b.onclick = () => {
+  if (boardInfo.access === b.dataset.access) return;
+  adminOp({ op: "settings", access: b.dataset.access, resetRoles: true });
+  toast(b.dataset.access === "view" ? "Теперь по ссылке можно только смотреть." : "Теперь все по ссылке могут рисовать.");
+});
+armed($("mClear"), () => { undoStack.length = redoStack.length = 0; syncUndo(); selected = null; items.clear(); renderDom(); touched(); send({ type: "clear" }); toast("Доска очищена."); }, "Точно очистить?");
+armed($("mDelete"), () => adminOp({ op: "delete" }), "Удалить навсегда?");
+themeBtn.addEventListener("click", () => closeManage());
+
+const BLOCK = {
+  kicked: ["Вас отключили от доски", "Владелец доски отключил вас. Можно подключиться снова.", true],
+  banned: ["Доступ закрыт", "Владелец доски заблокировал вам доступ к ней.", false],
+  deleted: ["Доска удалена", "Этой доски больше нет. Попросите у владельца ссылку на другую.", false],
+  notfound: ["Такой доски нет", "Проверьте ссылку или попросите у владельца новую.", false],
+};
+function showBlocker(reason) {
+  const [title, text, retry] = BLOCK[reason] || BLOCK.kicked;
+  $("bTitle").textContent = title; $("bText").textContent = text; $("bRetry").hidden = !retry;
+  $("blocker").hidden = false; closeManage(); closeThemes();
+}
+$("bRetry").onclick = () => { $("blocker").hidden = true; stopped = false; mode = "connecting"; setStatus(); connect(); };
+
 /* ---------- connection ---------- */
 const boardId = (location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1] || "demo";
 let ws = null, retry = 0, ready = false, fittedOnce = false;
@@ -1162,13 +1301,14 @@ function handle(m) {
     myPeer = m.you; items.clear(); remoteDrafts.clear();
     for (const [k, v] of Object.entries(m.items || {})) items.set(k, v);
     peers = m.peers || []; mode = "shared"; ready = true;
+    const prev = myRole; myRole = m.role || "editor"; boardInfo = m.board || boardInfo; bans = m.bans || [];
     // replay what was changed while the connection was down
     const queued = outbox.splice(0);
     for (const op of queued) {
       if (op.type === "set") items.set(op.id, op.data); else if (op.type === "del") items.delete(op.id); else if (op.type === "clear") items.clear();
       send(op);
     }
-    renderClear(false); renderDom(); touched(); renderPeers();
+    renderClear(false); renderDom(); touched(); renderPeers(); renderBoardInfo(); applyRole(prev === myRole ? null : prev);
     if (!fittedOnce) { fittedOnce = true; fit(); }
   } else if (m.type === "set") {
     remoteDrafts.delete(m.id);
@@ -1189,18 +1329,23 @@ function handle(m) {
     } else r = { d, t: Date.now() };
     remoteDrafts.set(m.id, r); draw();
   }
-  else if (m.type === "peers") { peers = m.peers || []; renderPeers(); }
+  else if (m.type === "peers") { peers = m.peers || []; renderPeers(); renderManage(); }
+  else if (m.type === "you") { const prev = myRole; myRole = m.role; if (m.bans) bans = m.bans; applyRole(prev); }
+  else if (m.type === "board") { boardInfo = m.board || boardInfo; renderBoardInfo(); }
+  else if (m.type === "bans") { bans = m.bans || []; renderManage(); }
+  else if (m.type === "kicked") { stopped = true; ready = false; try { ws.close(); } catch {} showBlocker(m.reason); }
   else if (m.type === "cursor") { if (m.cur) cursors.set(m.peer, m.cur); else cursors.delete(m.peer); renderCursors(); }
   else if (m.type === "error") toast(m.message || "Ошибка сервера");
 }
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ready = false;
-  ws = new WebSocket(`${proto}//${location.host}/ws?board=${encodeURIComponent(boardId)}&name=${encodeURIComponent(myName)}`);
+  ws = new WebSocket(`${proto}//${location.host}/ws?board=${encodeURIComponent(boardId)}&name=${encodeURIComponent(myName)}&client=${encodeURIComponent(clientId)}`);
   ws.onopen = () => { retry = 0; };
   ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch { return; } handle(m); };
   ws.onclose = () => {
     ready = false;
+    if (stopped) { mode = "offline"; setStatus(); return; }
     if (mode !== "connecting") mode = "offline";
     setStatus();
     setTimeout(connect, Math.min(8000, 400 * 2 ** retry++));
@@ -1209,7 +1354,7 @@ function connect() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden && ws && ws.readyState > 1) { retry = 0; } });
 
 /* ---------- boot ---------- */
-window.boardDebug = () => ({ items: [...items.values()].map(i => ({ kind: i.kind, n: i.p ? i.p.length : 0, x: i.x, y: i.y, w: i.w, h: i.h, src: i.src })), drafts: remoteDrafts.size, view: { ...view }, mode, selected, peers: peers.length });
+window.boardDebug = () => ({ me: myPeer, role: myRole, board: { ...boardInfo }, bans: bans.length, blocked: !$("blocker").hidden ? $("bTitle").textContent : null, peerList: peers.map(p => ({ peer: p.peer, name: p.name, role: p.role })), items: [...items.values()].map(i => ({ kind: i.kind, n: i.p ? i.p.length : 0, x: i.x, y: i.y, w: i.w, h: i.h, src: i.src })), drafts: remoteDrafts.size, view: { ...view }, mode, selected, peers: peers.length });
 refreshPalette();
 setTool("pen"); renderClear(false); syncUndo();
 view = { x: innerWidth / 2, y: innerHeight / 2, z: 1 };

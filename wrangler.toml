@@ -7,16 +7,24 @@ preview_urls = false
 # The page is bundled into the Worker as text, so no separate asset upload is needed.
 [[rules]]
 type = "Text"
-globs = ["**/*.html", "**/*.svg"]
+globs = ["**/*.html", "**/*.svg", "**/theme.js"]
 fallthrough = false
 
 [[durable_objects.bindings]]
 name = "BOARD"
 class_name = "Board"
 
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Board"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Registry"]
 
 [observability]
 enabled = true

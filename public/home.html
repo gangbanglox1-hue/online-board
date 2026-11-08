@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Общая доска</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Figtree:wght@400;600&display=swap">
+<style>
+:root { --bg: #f6f7f4; --dot: #c9cfc4; --fg: #1d2420; --muted: #67706a; --panel: #ffffff; --line: #dde2da; --accent: #2f6f5e; --shadow: 0 6px 24px rgba(30,40,34,.12);
+  --f-ui: "Figtree", system-ui, sans-serif; --f-hand: "Caveat", "Comic Sans MS", cursive; }
+@media (prefers-color-scheme: dark) { :root { --bg: #171b19; --dot: #303733; --fg: #e7ebe6; --muted: #98a19a; --panel: #222825; --line: #353d38; --accent: #6cc3a6; --shadow: 0 6px 24px rgba(0,0,0,.45); color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--f-ui);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 24px 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px; }
+main { max-width: 440px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 28px 26px; text-align: center; display: grid; gap: 10px; }
+h1 { margin: 0; font: 700 48px/1 var(--f-hand); }
+p { margin: 0; color: var(--muted); }
+a { color: var(--accent); font-weight: 600; font-size: 14px; text-decoration: none; margin-top: 8px; }
+a:hover { text-decoration: underline; }
+</style>
+<script src="/theme.js"></script>
+</head>
+<body>
+<main>
+  <h1>Общая доска</h1>
+  <p>Доски здесь создаёт владелец сайта. Попросите у него ссылку на доску, и по ней можно будет рисовать вместе.</p>
+  <a href="/admin">Вход для владельца</a>
+</main>
+</body>
+</html>
