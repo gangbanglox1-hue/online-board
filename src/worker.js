@@ -1,6 +1,8 @@
 // Cloudflare Worker + Durable Object: one Durable Object per board keeps its items and pictures
 // in SQLite and relays live changes over WebSockets.
 import { DurableObject } from "cloudflare:workers";
+import INDEX_HTML from "../public/index.html";
+import FAVICON_SVG from "../public/favicon.svg";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const KINDS = new Set(["stroke", "line", "arrow", "rect", "ellipse", "text", "note", "image"]);
@@ -61,11 +63,10 @@ export default {
       return env.BOARD.get(env.BOARD.idFromName(board)).fetch(request);
     }
     if (/^\/b\/[A-Za-z0-9_-]{1,40}\/?$/.test(p)) {
-      const res = await env.ASSETS.fetch(new Request(url.origin + "/index.html"));
-      return new Response(res.body, { status: res.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+      return new Response(INDEX_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
     }
-    if (p === "/index.html") return Response.redirect(url.origin + "/", 302);
-    return env.ASSETS.fetch(request);
+    if (p === "/favicon.svg") return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
+    return new Response("Не найдено", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   },
 };
 

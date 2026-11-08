@@ -20,17 +20,25 @@ npm start
 - `PORT` — порт (по умолчанию 3000)
 - `DATA_DIR` — папка, где хранятся доски (по умолчанию `./data`)
 
+## Где работает
+
+**https://online-board.risuem.workers.dev** — Cloudflare Workers. Доски и картинки хранятся в Durable Objects (SQLite), по одному объекту на доску.
+
 ## Выложить в интернет
 
-### Cloudflare Workers (бесплатно, рекомендуется)
+### Cloudflare Workers (бесплатно)
 
-Доски хранятся в Durable Objects, сайт не засыпает, карта не нужна.
+Нужен API-токен Cloudflare по шаблону «Edit Cloudflare Workers».
 
-1. Cloudflare → **Workers & Pages → Create → Import a repository** → выберите этот репозиторий.
-2. Имя проекта оставьте **online-board** (как в `wrangler.toml`). Команду деплоя не меняйте: `npx wrangler deploy`.
-3. **Deploy**. Сайт появится по адресу `https://online-board.<ваш-поддомен>.workers.dev`, а каждый push в main будет обновлять его сам.
+```bash
+npm install
+```
 
-Локально: `npm run dev` (http://localhost:8787), выложить вручную: `npx wrangler login`, затем `npm run deploy`.
+```bash
+CLOUDFLARE_API_TOKEN=<токен> npx wrangler deploy
+```
+
+Страница встраивается в код Worker'а как текст (`[[rules]]` в `wrangler.toml`), отдельной загрузки статических файлов нет. Локально: `npm run dev` → http://localhost:8787.
 
 ### Свой сервер на Node.js
 
