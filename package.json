@@ -1,0 +1,23 @@
+{
+  "name": "online-board",
+  "version": "1.0.0",
+  "description": "Онлайн-доска для совместного рисования",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}
