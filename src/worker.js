@@ -76,6 +76,7 @@ const registry = env => env.REGISTRY.get(env.REGISTRY.idFromName("registry"));
 const boardStub = (env, id) => env.BOARD.get(env.BOARD.idFromName(id));
 async function call(stub, path, body) {
   const r = await stub.fetch("https://internal" + path, body === undefined ? {} : { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  if (r.status >= 500) throw new Error("storage unavailable: " + path);
   return r.json();
 }
 async function isAdmin(env, req) {
@@ -93,8 +94,35 @@ async function toBoard(env, req, board, admin) {
   return boardStub(env, board).fetch(new Request(req, { headers: h }));
 }
 
+const UNAVAILABLE_HTML = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Доска временно недоступна</title><meta http-equiv="refresh" content="60">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7f4;color:#1d2420;font:16px/1.55 system-ui,sans-serif;padding:16px}
+@media (prefers-color-scheme:dark){body{background:#171b19;color:#e7ebe6}}main{max-width:420px;text-align:center}h1{font-size:24px;margin:0 0 8px}p{margin:0;opacity:.75}</style></head>
+<body><main><h1>Доска временно недоступна</h1><p>Сервер перегружен или достиг дневного лимита. Страница обновится сама через минуту.</p></main></body></html>`;
+
 export default {
   async fetch(request, env) {
+    try {
+      return await route(request, env);
+    } catch (e) {
+      console.error("request failed", new URL(request.url).pathname, e && e.message);
+      const p = new URL(request.url).pathname;
+      if (p.startsWith("/api/") || p.startsWith("/img/")) return json({ error: "unavailable" }, 503, { "retry-after": "60" });
+      if (p === "/ws" && request.headers.get("Upgrade") === "websocket") {
+        // tell the page why, so it waits calmly instead of retrying every few seconds
+        const { 0: client, 1: server } = new WebSocketPair();
+        server.accept();
+        server.send(JSON.stringify({ type: "kicked", reason: "unavailable" }));
+        server.close(4503, "unavailable");
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      return new Response(UNAVAILABLE_HTML, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "retry-after": "60", "cache-control": "no-store" } });
+    }
+  },
+};
+
+async function route(request, env) {
+  {
     const url = new URL(request.url);
     const p = url.pathname;
     const method = request.method;
@@ -197,21 +225,29 @@ export default {
     }
 
     return new Response("Не найдено", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-  },
-};
+  }
+}
 
 /* ---------- Registry: owner, sessions, board list, settings ---------- */
 export class Registry extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    if (env.SIMULATE_OUTAGE === "1") throw new Error("Exceeded allowed rows read in Durable Objects free tier. (simulated)");
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS fails (ip TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL);`);
   }
-  get(k) { const r = this.sql.exec("SELECT value FROM kv WHERE key = ?", k).toArray()[0]; return r ? JSON.parse(r.value) : null; }
-  put(k, v) { this.sql.exec("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", k, JSON.stringify(v)); }
+  get(k) {
+    if (!this.kvCache) this.kvCache = new Map();
+    if (this.kvCache.has(k)) return this.kvCache.get(k);
+    const r = this.sql.exec("SELECT value FROM kv WHERE key = ?", k).toArray()[0];
+    const v = r ? JSON.parse(r.value) : null;
+    this.kvCache.set(k, v);
+    return v;
+  }
+  put(k, v) { this.sql.exec("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", k, JSON.stringify(v)); if (this.kvCache) this.kvCache.set(k, v); }
   async newSession() {
     const sid = randomId(24);
     this.sql.exec("DELETE FROM sessions WHERE expires < ?", Date.now());
@@ -219,6 +255,10 @@ export class Registry extends DurableObject {
     return sid;
   }
   async fetch(request) {
+    try { return await this.handle(request); }
+    catch (e) { console.error("registry failed", e && e.message); return json({ error: "unavailable" }, 503); }
+  }
+  async handle(request) {
     const p = new URL(request.url).pathname;
     const b = request.method === "POST" ? await request.json() : {};
     switch (p) {
@@ -273,21 +313,45 @@ const isManager = role => role === "admin" || role === "owner";
 export class Board extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    if (env.SIMULATE_OUTAGE === "1") throw new Error("Exceeded allowed rows read in Durable Objects free tier. (simulated)");
     this.sql = ctx.storage.sql;
+    if (env.DEBUG_ROWS === "1") {
+      const exec = this.sql.exec.bind(this.sql); this.rowsRead = 0;
+      this.sql = { exec: (...a) => { const c = exec(...a); const arr = c.toArray(); this.rowsRead += c.rowsRead; return Object.assign(arr, { toArray: () => arr, one: () => arr[0] }); } };
+    }
     this.sql.exec(`CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS roles (client TEXT PRIMARY KEY, role TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, client TEXT NOT NULL, ip TEXT NOT NULL, name TEXT NOT NULL, at INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, client TEXT NOT NULL, ip TEXT NOT NULL, name TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS bans_client ON bans (client);`);
     this.meta = {};
     for (const r of this.sql.exec("SELECT key, value FROM meta")) this.meta[r.key] = JSON.parse(r.value);
     this.budget = new Map();
     this.warned = new Map();
+    this.cache = null;   // id -> item JSON, loaded once while people are on the board
+    // Counts are kept as numbers. Counting rows on every change read the whole board each time
+    // and used up the daily read limit of the free plan.
+    if (typeof this.meta.count !== "number") this.setMeta("count", this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n);
+    if (typeof this.meta.imgBytes !== "number") this.setMeta("imgBytes", this.sql.exec("SELECT COALESCE(SUM(size), 0) AS n FROM images").one().n);
+  }
+  loadCache() {
+    if (!this.cache) {
+      this.cache = new Map();
+      for (const row of this.sql.exec("SELECT id, data FROM items")) this.cache.set(row.id, row.data);
+      if (this.cache.size !== this.meta.count) this.setMeta("count", this.cache.size);
+    }
+    return this.cache;
+  }
+  itemsJson() {
+    let out = "{", first = true;
+    for (const [id, data] of this.loadCache()) { out += (first ? "" : ",") + JSON.stringify(id) + ":" + data; first = false; }
+    return out + "}";
   }
 
   /* settings and roles */
   setMeta(k, v) { this.meta[k] = v; this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", k, JSON.stringify(v)); }
-  hasContent() { return this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n > 0; }
+  hasContent() { return (this.meta.count || 0) > 0; }
   info() { return { name: this.meta.name || "Общая доска", access: this.meta.access || "edit" }; }
   async init(id, name, owner) {
     this.setMeta("id", id); this.setMeta("name", cleanName(name, "Доска")); this.setMeta("access", "edit");
@@ -341,8 +405,8 @@ export class Board extends DurableObject {
     this.broadcast({ type: "kicked", reason: "deleted" });
     for (const w of this.ctx.getWebSockets()) { try { w.close(4004, "deleted"); } catch {} }
     for (const t of ["items", "images", "roles", "bans", "meta"]) this.sql.exec(`DELETE FROM ${t}`);
-    this.meta = {};
-    this.setMeta("deleted", true);
+    this.meta = {}; this.cache = null;
+    this.setMeta("deleted", true); this.setMeta("count", 0); this.setMeta("imgBytes", 0);
   }
   reject(reason) {
     const { 0: client, 1: server } = new WebSocketPair();
@@ -354,15 +418,21 @@ export class Board extends DurableObject {
 
   async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/internal/")) return this.internal(request, url.pathname);
-    if (url.pathname.startsWith("/img/")) return this.image(request, url);
-    return this.connect(request, url);
+    try {
+      if (url.pathname.startsWith("/internal/")) return await this.internal(request, url.pathname);
+      if (url.pathname.startsWith("/img/")) return await this.image(request, url);
+      return await this.connect(request, url);
+    } catch (e) {
+      console.error("board failed", url.pathname, e && e.message);
+      if (request.headers.get("Upgrade") === "websocket") return this.reject("unavailable");
+      return json({ error: "unavailable" }, 503);
+    }
   }
 
   async internal(request, path) {
     const b = request.method === "POST" ? await request.json() : {};
     if (path === "/internal/stats") {
-      return json({ ...this.info(), online: this.ctx.getWebSockets().length, items: this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n,
+      return json({ ...this.info(), online: this.ctx.getWebSockets().length, items: this.meta.count || 0, rowsRead: this.rowsRead,
         created: this.meta.created || null, deleted: !!this.meta.deleted, hasOwner: !!this.meta.owner });
     }
     if (path === "/internal/init") { if (!this.meta.created) await this.init(b.id, b.name, null); return json({ ok: true }); }
@@ -399,10 +469,9 @@ export class Board extends DurableObject {
     };
     meta.role = this.roleFor(meta);
     server.serializeAttachment(meta);
-    const items = {};
-    for (const row of this.sql.exec("SELECT id, data FROM items")) items[row.id] = JSON.parse(row.data);
-    server.send(JSON.stringify({ type: "init", items, you: meta.peer, color: meta.color, role: meta.role, board: this.info(),
-      peers: this.peers(), bans: isManager(meta.role) ? this.banList() : undefined }));
+    const head = JSON.stringify({ type: "init", you: meta.peer, color: meta.color, role: meta.role, board: this.info(),
+      peers: this.peers(), bans: isManager(meta.role) ? this.banList() : undefined });
+    server.send(head.slice(0, -1) + ',"items":' + this.itemsJson() + "}");
     this.broadcast({ type: "peers", peers: this.peers() }, server);
     return new Response(null, { status: 101, webSocket: pair });
   }
@@ -424,10 +493,10 @@ export class Board extends DurableObject {
     const buf = await request.arrayBuffer();
     if (!buf.byteLength) return json({ error: "empty" }, 400);
     if (buf.byteLength > MAX_IMAGE_BYTES) return json({ error: "too_large" }, 413);
-    const total = this.sql.exec("SELECT COALESCE(SUM(size), 0) AS n FROM images").one().n;
-    if (total + buf.byteLength > MAX_BOARD_IMAGE_BYTES) return json({ error: "board_full" }, 507);
+    if ((this.meta.imgBytes || 0) + buf.byteLength > MAX_BOARD_IMAGE_BYTES) return json({ error: "board_full" }, 507);
     const newId = randomId(9);
     this.sql.exec("INSERT INTO images (id, type, size, data) VALUES (?, ?, ?, ?)", newId, type, buf.byteLength, buf);
+    this.setMeta("imgBytes", (this.meta.imgBytes || 0) + buf.byteLength);
     return json({ src: `/img/${board}/${newId}` });
   }
 
@@ -446,6 +515,17 @@ export class Board extends DurableObject {
   findPeer(peer) { return this.sockets().find(s => s.meta.peer === peer); }
 
   async webSocketMessage(ws, raw) {
+    try { await this.message(ws, raw); }
+    catch (e) {
+      console.error("message failed", e && e.message);
+      const now = Date.now();
+      if (now - (this.warned.get(ws) || 0) > 5000) {
+        this.warned.set(ws, now);
+        try { ws.send(JSON.stringify({ type: "error", message: "Сервер временно не сохраняет изменения. Попробуйте чуть позже." })); } catch {}
+      }
+    }
+  }
+  async message(ws, raw) {
     if (typeof raw !== "string" || raw.length > 512 * 1024 || !this.allow(ws)) return;
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!m || typeof m !== "object") return;
@@ -456,18 +536,26 @@ export class Board extends DurableObject {
         if (!canEdit) return this.viewOnly(ws);
         if (typeof m.id !== "string" || !ID_RE.test(m.id)) return;
         const item = cleanItem(m.data, meta.board); if (!item) return;
-        const exists = this.sql.exec("SELECT 1 FROM items WHERE id = ?", m.id).toArray().length > 0;
-        if (!exists && this.sql.exec("SELECT COUNT(*) AS n FROM items").one().n >= MAX_ITEMS) {
+        // one-row lookup unless the board is already in memory; never read the whole board for one change
+        const exists = this.cache ? this.cache.has(m.id) : this.sql.exec("SELECT 1 FROM items WHERE id = ?", m.id).toArray().length > 0;
+        if (!exists && (this.meta.count || 0) >= MAX_ITEMS) {
           ws.send(JSON.stringify({ type: "error", message: "Доска переполнена" })); return;
         }
-        this.sql.exec("INSERT OR REPLACE INTO items (id, data) VALUES (?, ?)", m.id, JSON.stringify(item));
-        this.broadcast({ type: "set", id: m.id, data: item }, ws);
+        const data = JSON.stringify(item);
+        this.sql.exec("INSERT OR REPLACE INTO items (id, data) VALUES (?, ?)", m.id, data);
+        if (this.cache) this.cache.set(m.id, data);
+        if (!exists) this.setMeta("count", (this.meta.count || 0) + 1);
+        this.broadcast('{"type":"set","id":' + JSON.stringify(m.id) + ',"data":' + data + "}", ws);
         break;
       }
       case "del": {
         if (!canEdit) return this.viewOnly(ws);
         if (typeof m.id !== "string") return;
+        const exists = this.cache ? this.cache.has(m.id) : this.sql.exec("SELECT 1 FROM items WHERE id = ?", m.id).toArray().length > 0;
+        if (!exists) return;
         this.sql.exec("DELETE FROM items WHERE id = ?", m.id);
+        if (this.cache) this.cache.delete(m.id);
+        this.setMeta("count", Math.max(0, (this.meta.count || 0) - 1));
         this.broadcast({ type: "del", id: m.id }, ws);
         break;
       }
@@ -475,6 +563,8 @@ export class Board extends DurableObject {
         if (!isManager(role)) return;
         this.sql.exec("DELETE FROM items");
         this.sql.exec("DELETE FROM images");
+        if (this.cache) this.cache.clear();
+        this.setMeta("count", 0); this.setMeta("imgBytes", 0);
         this.broadcast({ type: "clear" }, ws);
         break;
       }
@@ -542,6 +632,7 @@ export class Board extends DurableObject {
 
   async webSocketClose(ws, code) {
     this.budget.delete(ws); this.warned.delete(ws);
+    if (this.ctx.getWebSockets().filter(w => w !== ws).length === 0) this.cache = null;
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, "bye"); } catch {}
     this.broadcast({ type: "peers", peers: this.peers(ws) }, ws);
   }

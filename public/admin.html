@@ -154,7 +154,7 @@ async function api(path, method = "GET", body) {
 }
 const ERR = {
   bad_token: "Ссылка настройки неверная или устарела.", already_set: "Пароль уже задан. Войдите с ним.", short_password: "Пароль должен быть не короче 8 символов.",
-  wrong_password: "Неверный пароль.", locked: "Слишком много попыток. Подождите 10 минут.", not_set: "Владелец ещё не настроен.",
+  wrong_password: "Неверный пароль.", unavailable: "Сервер временно недоступен. Попробуйте через минуту.", locked: "Слишком много попыток. Подождите 10 минут.", not_set: "Владелец ещё не настроен.",
 };
 function armed(b, action, confirmText) {
   const orig = b.textContent; let t = 0;
@@ -167,7 +167,12 @@ function armed(b, action, confirmText) {
 const setupToken = (location.hash.match(/setup=([A-Za-z0-9_-]+)/) || [])[1] || "";
 
 async function start() {
-  const { data } = await api("state");
+  const { data, status } = await api("state");
+  if (status === 503) {
+    show("vLoading");
+    $("vLoading").innerHTML = "<p>Сервер временно недоступен: перегружен или достиг дневного лимита бесплатного тарифа. Страница попробует снова через минуту.</p>";
+    setTimeout(start, 60000); return;
+  }
   if (data.isAdmin) { show("vDash"); history.replaceState(null, "", "/admin"); loadDash(data); return; }
   if (!data.adminSet) {
     show("vSetup");
@@ -206,13 +211,14 @@ document.querySelectorAll("[data-policy]").forEach(b => b.onclick = async () => 
 async function loadDash(state) {
   policy = state?.createPolicy || policy; renderPolicy();
   await loadBoards();
-  clearInterval(refreshT); refreshT = setInterval(() => { if (!document.hidden && !document.activeElement?.closest?.(".rename")) loadBoards(); }, 15000);
+  clearInterval(refreshT); refreshT = setInterval(() => { if (!document.hidden && !document.activeElement?.closest?.(".rename")) loadBoards(); }, 30000);
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }) : "";
 const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return n + " " + (m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many); };
 async function loadBoards() {
   const r = await api("boards");
   if (r.status === 401) { show("vLogin"); return; }
+  if (r.status === 503) { toast("Сервер временно недоступен. Список обновится сам."); return; }
   const list = r.data.boards || [];
   $("boardsTitle").textContent = list.length ? "Доски · " + list.length : "Доски";
   const grid = $("boards"); grid.innerHTML = "";

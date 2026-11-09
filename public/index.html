@@ -53,7 +53,7 @@ body { margin: 0; font-size: 14px; background: var(--bg); color: var(--fg); font
 .txt:empty::before { content: "Текст"; opacity: .4; }
 .it.editing:empty::before { content: ""; }
 #cursors { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.cur { position: absolute; left: 0; top: 0; transition: transform .09s linear; will-change: transform; }
+.cur { position: absolute; left: 0; top: 0; transition: transform .12s linear; will-change: transform; }
 .cur svg { display: block; }
 .cur span { position: absolute; left: 14px; top: 16px; font: 600 12px var(--f-ui); padding: 2px 7px; border-radius: 9px; color: #fff; white-space: nowrap; }
 .seldel { position: fixed; left: 0; top: 0; z-index: 5; width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--line);
@@ -688,8 +688,8 @@ selDel.onclick = () => { if (selected) removeItem(selected, true); };
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 function setLocal(id, data) { items.set(id, data); if (isDomKind(data.kind)) renderDom(); else { touched(); renderDom(); } }
 function delLocal(id) { const it = items.get(id); items.delete(id); if (selected === id) selected = null; if (it && isDomKind(it.kind)) renderDom(); else { touched(); renderDom(); } }
-function rawSet(id, data) { setLocal(id, data); send({ type: "set", id, data }); }
-function rawDelete(id) { delLocal(id); send({ type: "del", id }); }
+function rawSet(id, data) { setLocal(id, data); send({ type: "set", id, data }); cacheSave(); }
+function rawDelete(id) { delLocal(id); send({ type: "del", id }); cacheSave(); }
 function record(op) { undoStack.push(op); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; syncUndo(); }
 function create(data, id = newId()) {
   data.t = Date.now();
@@ -718,7 +718,7 @@ let draftLast = 0, draftTimer = 0;
 function pushDraft(force) {
   if (!draft) return;
   const now = performance.now();
-  if (!force && now - draftLast < 40) { if (!draftTimer) draftTimer = setTimeout(() => { draftTimer = 0; pushDraft(true); }, 40); return; }
+  if (!force && now - draftLast < 60) { if (!draftTimer) draftTimer = setTimeout(() => { draftTimer = 0; pushDraft(true); }, 60); return; }
   draftLast = now;
   const { _id, _raw, _sent, _sentStraight, _straight, ...d } = draft;
   if (d.kind === "stroke") {
@@ -1101,11 +1101,15 @@ function setStatus() {
   const others = peers.filter(p => p.peer !== myPeer).length;
   stEl.className = "dotst" + (mode === "shared" ? " on" : mode === "offline" ? " ro" : "");
   stText.textContent = mode === "connecting" ? "подключение…"
-    : mode === "offline" ? "нет связи, переподключаюсь…"
+    : mode === "offline" ? (busy ? "сервер временно недоступен, ждём…" : "нет связи, переподключаюсь…")
     : (others ? `ещё ${others} на доске` : myRole === "viewer" ? "можно только смотреть" : "сохраняется автоматически");
 }
+let lastCurX = 0, lastCurY = 0;
 function sendCursor(e) {
-  const now = performance.now(); if (now - lastSend < 40) return; lastSend = now;
+  const now = performance.now();
+  if (now - lastSend < (draft ? 160 : 80)) return;
+  if (Math.abs(e.clientX - lastCurX) + Math.abs(e.clientY - lastCurY) < 3) return;
+  lastSend = now; lastCurX = e.clientX; lastCurY = e.clientY;
   const w = toWorld(e.clientX, e.clientY);
   send({ type: "cursor", cur: { x: Math.round(w.x), y: Math.round(w.y) } });
 }
@@ -1288,9 +1292,30 @@ function showBlocker(reason) {
 }
 $("bRetry").onclick = () => { $("blocker").hidden = true; stopped = false; mode = "connecting"; setStatus(); connect(); };
 
+/* ---------- copy of the board in this browser ---------- */
+const CACHE_KEY = "board.cache." + ((location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1] || "demo");
+let cacheT = 0;
+function cacheSave() {
+  clearTimeout(cacheT);
+  cacheT = setTimeout(() => {
+    try {
+      const str = JSON.stringify({ t: Date.now(), name: boardInfo.name, items: [...items] });
+      if (str.length < 3e6) localStorage.setItem(CACHE_KEY, str); else localStorage.removeItem(CACHE_KEY);
+    } catch {}
+  }, 1500);
+}
+function cacheLoad() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (!c || !Array.isArray(c.items)) return;
+    for (const [k, v] of c.items) if (v && typeof v === "object") items.set(k, v);
+    if (c.name) { boardInfo = { ...boardInfo, name: c.name }; $("boardName").textContent = c.name; document.title = c.name; }
+  } catch {}
+}
+
 /* ---------- connection ---------- */
 const boardId = (location.pathname.match(/\/b\/([A-Za-z0-9_-]+)/) || [])[1] || "demo";
-let ws = null, retry = 0, ready = false, fittedOnce = false;
+let ws = null, retry = 0, ready = false, fittedOnce = false, busy = false, retryT = 0;
 const outbox = [];
 function send(m) {
   if (ws && ws.readyState === 1 && ready) ws.send(JSON.stringify(m));
@@ -1308,15 +1333,15 @@ function handle(m) {
       if (op.type === "set") items.set(op.id, op.data); else if (op.type === "del") items.delete(op.id); else if (op.type === "clear") items.clear();
       send(op);
     }
-    renderClear(false); renderDom(); touched(); renderPeers(); renderBoardInfo(); applyRole(prev === myRole ? null : prev);
+    renderClear(false); renderDom(); touched(); renderPeers(); renderBoardInfo(); applyRole(prev === myRole ? null : prev); cacheSave();
     if (!fittedOnce) { fittedOnce = true; fit(); }
   } else if (m.type === "set") {
     remoteDrafts.delete(m.id);
     if (drag && drag.id === m.id) return;
-    setLocal(m.id, m.data);
+    setLocal(m.id, m.data); cacheSave();
   }
-  else if (m.type === "del") { delLocal(m.id); draw(); }
-  else if (m.type === "clear") { items.clear(); selected = null; renderDom(); touched(); }
+  else if (m.type === "del") { delLocal(m.id); draw(); cacheSave(); }
+  else if (m.type === "clear") { items.clear(); selected = null; renderDom(); touched(); cacheSave(); }
   else if (m.type === "draft") {
     if (m.end) { remoteDrafts.delete(m.id); draw(); return; }
     const d = m.d || {};
@@ -1333,7 +1358,10 @@ function handle(m) {
   else if (m.type === "you") { const prev = myRole; myRole = m.role; if (m.bans) bans = m.bans; applyRole(prev); }
   else if (m.type === "board") { boardInfo = m.board || boardInfo; renderBoardInfo(); }
   else if (m.type === "bans") { bans = m.bans || []; renderManage(); }
-  else if (m.type === "kicked") { stopped = true; ready = false; try { ws.close(); } catch {} showBlocker(m.reason); }
+  else if (m.type === "kicked") {
+    if (m.reason === "unavailable") { busy = true; return; }   // the server will close; we retry calmly
+    stopped = true; ready = false; try { ws.close(); } catch {} showBlocker(m.reason);
+  }
   else if (m.type === "cursor") { if (m.cur) cursors.set(m.peer, m.cur); else cursors.delete(m.peer); renderCursors(); }
   else if (m.type === "error") toast(m.message || "Ошибка сервера");
 }
@@ -1341,24 +1369,31 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ready = false;
   ws = new WebSocket(`${proto}//${location.host}/ws?board=${encodeURIComponent(boardId)}&name=${encodeURIComponent(myName)}&client=${encodeURIComponent(clientId)}`);
-  ws.onopen = () => { retry = 0; };
+  ws.onopen = () => { retry = 0; busy = false; };
   ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch { return; } handle(m); };
   ws.onclose = () => {
     ready = false;
     if (stopped) { mode = "offline"; setStatus(); return; }
-    if (mode !== "connecting") mode = "offline";
+    mode = "offline";
     setStatus();
-    setTimeout(connect, Math.min(8000, 400 * 2 ** retry++));
+    // wait longer after each failed attempt (up to 30 s, a little random so everyone does not return at once)
+    const delay = busy ? 30000 : Math.min(30000, 500 * 2 ** retry++);
+    clearTimeout(retryT); retryT = setTimeout(connect, delay * (0.8 + Math.random() * 0.4));
   };
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && ws && ws.readyState > 1) { retry = 0; } });
+// coming back to the tab or the network: try right away instead of waiting out the pause
+const retryNow = () => { if (!stopped && ws && ws.readyState > 1) { retry = 0; clearTimeout(retryT); connect(); } };
+document.addEventListener("visibilitychange", () => { if (!document.hidden) retryNow(); });
+addEventListener("online", retryNow);
 
 /* ---------- boot ---------- */
 window.boardDebug = () => ({ me: myPeer, role: myRole, board: { ...boardInfo }, bans: bans.length, blocked: !$("blocker").hidden ? $("bTitle").textContent : null, peerList: peers.map(p => ({ peer: p.peer, name: p.name, role: p.role })), items: [...items.values()].map(i => ({ kind: i.kind, n: i.p ? i.p.length : 0, x: i.x, y: i.y, w: i.w, h: i.h, src: i.src })), drafts: remoteDrafts.size, view: { ...view }, mode, selected, peers: peers.length });
 refreshPalette();
 setTool("pen"); renderClear(false); syncUndo();
 view = { x: innerWidth / 2, y: innerHeight / 2, z: 1 };
+cacheLoad();
 resize(); renderDom(); setStatus();
+if (items.size) { fittedOnce = true; fit(); }
 connect();
 })();
 </script>
