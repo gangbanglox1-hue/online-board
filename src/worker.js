@@ -161,6 +161,23 @@ async function route(request, env) {
       return new Response("Not allowed", { status: 405 });
     }
 
+    if (p === "/api/export" || p === "/api/export-board" || p === "/api/import") {
+      const key = request.headers.get("x-migrate-key") || "";
+      if (!env.SETUP_TOKEN || !safeEqual(key, env.SETUP_TOKEN)) return json({ error: "forbidden" }, 403);
+      if (p === "/api/export") return json(await call(registry(env), "/export", {}));
+      if (p === "/api/export-board") {
+        const id = url.searchParams.get("id") || "";
+        if (!ID_RE.test(id)) return json({ error: "bad_id" }, 400);
+        return json(await call(boardStub(env, id), "/internal/export", {}));
+      }
+      if (method !== "POST") return json({ error: "method" }, 405);
+      const data = await request.json();
+      if (data.registry) await call(registry(env), "/import", data.registry);
+      let n = 0;
+      for (const b of data.boards || []) { if (ID_RE.test(b.id || "")) { await call(boardStub(env, b.id), "/internal/import", b); n++; } }
+      return json({ ok: true, boards: n });
+    }
+
     if (p.startsWith("/api/")) {
       if (method !== "GET" && !sameOrigin) return json({ error: "forbidden" }, 403);
       let body = {};
@@ -303,6 +320,13 @@ export class Registry extends DurableObject {
       case "/boards/add": this.sql.exec("INSERT OR IGNORE INTO boards (id, name, created) VALUES (?, ?, ?)", b.id, cleanName(b.name, "Доска"), Date.now()); return json({ ok: true });
       case "/boards/rename": this.sql.exec("UPDATE boards SET name = ? WHERE id = ?", cleanName(b.name, "Доска"), b.id); return json({ ok: true });
       case "/boards/remove": this.sql.exec("DELETE FROM boards WHERE id = ?", b.id); return json({ ok: true });
+      case "/export": return json({ pwd: this.get("pwd"), createPolicy: this.get("createPolicy"), boards: this.sql.exec("SELECT id, name, created FROM boards").toArray() });
+      case "/import": {
+        if (b.pwd && b.pwd.salt && b.pwd.hash) this.put("pwd", b.pwd);
+        if (b.createPolicy) this.put("createPolicy", b.createPolicy === "all" ? "all" : "admin");
+        for (const x of b.boards || []) this.sql.exec("INSERT OR REPLACE INTO boards (id, name, created) VALUES (?, ?, ?)", x.id, cleanName(x.name, "Доска"), Number(x.created) || Date.now());
+        return json({ ok: true });
+      }
     }
     return json({ error: "not_found" }, 404);
   }
@@ -438,6 +462,22 @@ export class Board extends DurableObject {
     if (path === "/internal/init") { if (!this.meta.created) await this.init(b.id, b.name, null); return json({ ok: true }); }
     if (path === "/internal/settings") return json(this.applySettings(b));
     if (path === "/internal/wipe") { this.wipe(); return json({ ok: true }); }
+    if (path === "/internal/export") {
+      const items = this.sql.exec("SELECT id, data FROM items").toArray();
+      const hasImages = (this.meta.imgBytes || 0) > 0 || items.some(r => r.data.includes('"kind":"image"'));
+      return json({ meta: this.meta, hasImages, items: hasImages ? [] : items,
+        roles: this.sql.exec("SELECT client, role FROM roles").toArray(), bans: this.sql.exec("SELECT id, client, ip, name, at FROM bans").toArray() });
+    }
+    if (path === "/internal/import") {
+      for (const t of ["items", "images", "roles", "bans", "meta"]) this.sql.exec(`DELETE FROM ${t}`);
+      this.meta = {}; this.cache = null;
+      for (const [k, v] of Object.entries(b.meta || {})) this.setMeta(k, v);
+      for (const r of b.items || []) this.sql.exec("INSERT OR REPLACE INTO items (id, data) VALUES (?, ?)", r.id, r.data);
+      for (const r of b.roles || []) this.sql.exec("INSERT OR REPLACE INTO roles (client, role) VALUES (?, ?)", r.client, r.role);
+      for (const r of b.bans || []) this.sql.exec("INSERT OR REPLACE INTO bans (id, client, ip, name, at) VALUES (?, ?, ?, ?, ?)", r.id, r.client, r.ip || "", r.name, r.at);
+      this.setMeta("count", (b.items || []).length); this.setMeta("imgBytes", 0);
+      return json({ ok: true });
+    }
     return json({ error: "not_found" }, 404);
   }
 
